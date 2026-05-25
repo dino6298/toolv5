@@ -402,8 +402,13 @@ function loadConfigLocal() {
 async function pushConfigToSupabase() {
   const cfg = saveConfigLocal();
   if (!supabaseClient || !supabaseSession) return setStatus('Đã lưu setting local. Muốn push cloud thì cần login Supabase.');
-  const row = { config_key: 'main', config: cfg, updated_at: new Date().toISOString() };
-  const { error } = await supabaseClient.from('user_configs').upsert(row, { onConflict: 'config_key' });
+  const row = {
+    user_id: supabaseSession.user.id,
+    config_key: 'main',
+    config: cfg,
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await supabaseClient.from('user_configs').upsert(row, { onConflict: 'user_id,config_key' });
   if (error) return setStatus('Push setting cloud lỗi: ' + error.message);
   setStatus('Đã push setting lên Supabase. Thiết bị khác có thể Pull setting cloud.');
 }
