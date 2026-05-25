@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Binance Futures Indicator Scanner Bot v4 Supabase + Binance Proxy</title>
+  <style>
+    :root {
+      --bg: #080b12;
+      --panel: #101827;
+      --panel2: #141f31;
+      --text: #e8eefc;
+      --muted: #91a0ba;
+      --green: #20d489;
+      --red: #ff5c7a;
+      --yellow: #ffd166;
+      --blue: #5ea0ff;
+      --border: #24324a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #102139 0, var(--bg) 35%);
+      color: var(--text);
+    }
+    .wrap { max-width: 1440px; margin: 0 auto; padding: 24px; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 18px; }
+    h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.04em; }
+    .sub { color: var(--muted); font-size: 14px; line-height: 1.5; max-width: 950px; }
+    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
+    .card { background: rgba(16,24,39,.92); border: 1px solid var(--border); border-radius: 18px; padding: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.28); }
+    .controls { display: grid; gap: 12px; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
+    input, select, button { width: 100%; border-radius: 12px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); padding: 10px 12px; font-size: 14px; }
+    button { cursor: pointer; background: linear-gradient(135deg, #2862ff, #7c3cff); border: 0; font-weight: 800; }
+    button.secondary { background: var(--panel2); border: 1px solid var(--border); }
+    button.danger { background: linear-gradient(135deg, #ff496d, #a8183a); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .status { margin-top: 12px; padding: 12px; border-radius: 14px; background: #0b1220; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    table { width: 100%; border-collapse: collapse; overflow: hidden; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; vertical-align: top; }
+    th { color: var(--muted); font-weight: 700; background: rgba(20,31,49,.95); position: sticky; top: 0; z-index: 1; }
+    tbody tr:hover { background: rgba(94,160,255,.07); }
+    .tag { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 999px; font-weight: 900; font-size: 12px; white-space: nowrap; }
+    .long { color: #04140d; background: var(--green); }
+    .short { color: #21050b; background: var(--red); }
+    .wait { color: #241b00; background: var(--yellow); }
+    .open { color: #06142a; background: var(--blue); }
+    .win { color: #04140d; background: var(--green); }
+    .loss { color: #21050b; background: var(--red); }
+    .expired { color: #241b00; background: #b8bcc8; }
+    .pill { display: inline-flex; padding: 3px 7px; border-radius: 999px; background: #0b1220; color: var(--muted); margin: 2px 3px 2px 0; white-space: nowrap; }
+    .score { font-size: 20px; font-weight: 950; }
+    .good { color: var(--green); }
+    .bad { color: var(--red); }
+    .warn { color: var(--yellow); }
+    .muted { color: var(--muted); }
+    .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 12px; }
+    .mini { background: #0b1220; border: 1px solid var(--border); border-radius: 16px; padding: 12px; color: var(--muted); }
+    .mini b { display:block; font-size: 20px; margin-top: 4px; color: var(--text); }
+    .detail { min-width: 240px; line-height: 1.45; }
+    .note { margin-top: 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .tabs { display:flex; gap:8px; margin-bottom: 12px; }
+    .tabs button { width:auto; padding: 9px 14px; background: #0b1220; border:1px solid var(--border); }
+    .tabs button.active { background: linear-gradient(135deg, #2862ff, #7c3cff); border: 0; }
+    .hidden { display:none; }
+    .smallbtn { width:auto; padding: 6px 9px; border-radius: 10px; font-size: 12px; }
+    .id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); word-break: break-all; }
+    .symbol-link { color: var(--text); text-decoration: none; font-weight: 900; }
+    .symbol-link:hover { color: var(--blue); text-decoration: underline; }
+    .signal-link { color: var(--muted); text-decoration: none; }
+    .signal-link:hover { color: var(--blue); text-decoration: underline; }
+    @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .cards { grid-template-columns: 1fr 1fr; } .wrap { padding: 14px; } table { min-width: 1180px; } .tablebox { overflow:auto; } header { flex-direction: column; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Binance Futures Indicator Scanner Bot v4</h1>
+      <div class="sub">Bot nghiên cứu tín hiệu: lọc symbol USDT Perpetual có thanh khoản + nến ổn định, đọc EMA/RSI/MACD/ADX/VWAP/ATR/Volume, tạo Signal ID cố định, chống duplicate, forward-test Entry/TP/SL, đồng bộ log qua Supabase và gọi Binance qua Cloudflare Worker proxy. Không tự đặt lệnh.</div>
+    </div>
+    <button id="scanBtn">Quét & tạo tín hiệu</button>
+  </header>
+
+  <div class="grid">
+    <aside class="card">
+      <div class="controls">
+        <label>Khung nến đọc tín hiệu
+          <select id="interval">
+            <option value="5m">5m - scalp nhanh</option>
+            <option value="15m" selected>15m - ổn định hơn</option>
+            <option value="1h">1h - lọc trend lớn</option>
+          </select>
+        </label>
+        <label>Khung nến forward-test
+          <select id="trackInterval">
+            <option value="1m" selected>1m - chính xác entry/TP/SL hơn</option>
+            <option value="5m">5m - nhẹ request hơn</option>
+          </select>
+        </label>
+        <div class="row">
+          <label>Số symbol top volume
+            <input id="topN" type="number" min="10" max="80" value="35" />
+          </label>
+          <label>Chu kỳ auto scan, giây
+            <input id="scanSec" type="number" min="45" max="900" value="120" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Min volume 24h, USDT
+            <input id="minVol" type="number" value="30000000" />
+          </label>
+          <label>Min điểm tạo tín hiệu
+            <input id="minScore" type="number" min="50" max="95" value="68" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Chống duplicate, phút
+            <input id="dupMin" type="number" min="15" max="1440" value="180" />
+          </label>
+          <label>Hết hạn tín hiệu, giờ
+            <input id="expireHours" type="number" min="1" max="72" value="12" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Ưu tiên trạng thái
+            <select id="sideFilter">
+              <option value="ALL">Tất cả</option>
+              <option value="LONG">Chỉ LONG</option>
+              <option value="SHORT">Chỉ SHORT</option>
+              <option value="WAIT">Chỉ WAIT</option>
+            </select>
+          </label>
+          <label>Sắp xếp bảng scan
+            <select id="sortBy">
+              <option value="score">Điểm tín hiệu</option>
+              <option value="stability">Độ ổn định nến</option>
+              <option value="volume">Volume 24h</option>
+              <option value="rr">Risk/Reward</option>
+            </select>
+          </label>
+        </div>
+        <button id="autoBtn" class="secondary">Bật auto scan</button>
+        <button id="forwardBtn" class="secondary">Forward-test log</button>
+        <button id="exportBtn" class="secondary">Export log JSON</button>
+        <button id="clearBtn" class="danger">Xóa log local</button>
+        <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+        <label>Binance Proxy URL - Cloudflare Worker
+          <input id="proxyUrl" type="text" autocomplete="url" placeholder="https://binance-proxy.xxx.workers.dev" />
+        </label>
+        <div class="row">
+          <button id="proxySaveBtn" class="secondary">Lưu proxy</button>
+          <button id="proxyTestBtn" class="secondary">Test proxy</button>
+        </div>
+        <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+        <label>Supabase Project URL
+          <input id="supaUrl" type="text" autocomplete="url" placeholder="https://xxxx.supabase.co" />
+        </label>
+        <label>Supabase publishable / anon key
+          <input id="supaKey" type="password" autocomplete="off" placeholder="sb_publishable_... hoặc anon key" />
+        </label>
+        <label>Email đăng nhập Supabase Auth
+          <input id="supaEmail" type="email" autocomplete="username" placeholder="email của bạn" />
+        </label>
+        <label>Password
+          <input id="supaPass" type="password" autocomplete="current-password" placeholder="không lưu password trong tool" />
+        </label>
+        <div class="row">
+          <button id="supaSaveBtn" class="secondary">Lưu config</button>
+          <button id="supaLoginBtn" class="secondary">Login</button>
+        </div>
+        <div class="row">
+          <button id="supaPullBtn" class="secondary">Pull cloud</button>
+          <button id="supaPushBtn" class="secondary">Push local</button>
+        </div>
+        <button id="supaLogoutBtn" class="secondary">Logout Supabase</button>
+      </div>
+      <div class="status" id="status">Sẵn sàng. Bấm “Quét & tạo tín hiệu” để lấy dữ liệu public từ Binance Futures.</div>
+      <div class="note">
+        V4 dùng Cloudflare Worker proxy để gọi Binance ổn định hơn, localStorage làm cache dự phòng và Supabase làm cloud sync. Tool lưu Proxy URL, Supabase URL/key và email; password không lưu trong code/localStorage. Sau khi login, Supabase session sẽ tự giữ trên trình duyệt.
+      </div>
+    </aside>
+
+    <main>
+      <div class="cards">
+        <div class="mini">Đã quét<b id="mScanned">0</b></div>
+        <div class="mini">Tín hiệu mới<b id="mNew">0</b></div>
+        <div class="mini">Đang theo dõi<b id="mOpen">0</b></div>
+        <div class="mini">Win / Loss<b id="mWL">0 / 0</b></div>
+        <div class="mini">LONG / SHORT<b id="mSide">0 / 0</b></div>
+        <div class="mini">Cập nhật<b id="mTime">-</b></div>
+      </div>
+
+      <div class="tabs">
+        <button id="tabScan" class="active">Bảng scan hiện tại</button>
+        <button id="tabLog">Forward Test Log</button>
+        <button id="tabStats">Learning Stats</button>
+      </div>
+
+      <div id="scanView" class="card tablebox">
+        <table>
+          <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Tín hiệu</th>
+            <th>Điểm</th>
+            <th>Giá / Entry</th>
+            <th>SL / TP</th>
+            <th>Chỉ báo chính</th>
+            <th>Lý do</th>
+          </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <div id="logView" class="card tablebox hidden">
+        <table>
+          <thead>
+          <tr>
+            <th>Signal</th>
+            <th>Side</th>
+            <th>Status</th>
+            <th>Entry/SL/TP</th>
+            <th>Signal Time</th>
+            <th>Kết quả</th>
+            <th>Hành động</th>
+          </tr>
+          </thead>
+          <tbody id="logBody"></tbody>
+        </table>
+      </div>
+
+      <div id="statsView" class="card tablebox hidden">
+        <table>
+          <thead>
+          <tr>
+            <th>Nhóm</th>
+            <th>Tổng</th>
+            <th>Win</th>
+            <th>Loss</th>
+            <th>Winrate</th>
+            <th>TP1 trước SL</th>
+            <th>Ghi chú</th>
+          </tr>
+          </thead>
+          <tbody id="statsBody"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const DIRECT_BINANCE_API = "https://fapi.binance.com";
+
+// Có thể điền sẵn các giá trị mặc định tại đây trước khi deploy riêng cho bạn.
+// Không nên điền password vào code HTML.
+const DEFAULT_BINANCE_PROXY_URL = "https://white-smoke-3054.thongbgglog.workers.dev/";
+const DEFAULT_SUPABASE_URL = "https://mycbxawfbttmwdbnwncn.supabase.co";
+const DEFAULT_SUPABASE_KEY = "sb_publishable_j2EGJJ9pbYTMwUQF624HGQ_gShP_K7w";
+const DEFAULT_SUPABASE_EMAIL = "thongbgglog@gmail.com";
+
+const PROXY_URL_KEY = "fta_binance_proxy_url";
+const STORE_KEY = "fta_indicator_scanner_v4_signals";
+const SUPA_URL_KEY = "fta_supabase_url";
+const SUPA_KEY_KEY = "fta_supabase_key";
+const SUPA_EMAIL_KEY = "fta_supabase_email";
+let autoTimer = null;
+let lastScanRows = [];
+let supabaseClient = null;
+let supabaseSession = null;
+let cloudSyncBusy = false;
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmt = (n, d=4) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+const avg = arr => arr.reduce((a,b)=>a+b,0) / Math.max(1, arr.length);
+const clamp = (n,min,max)=>Math.max(min,Math.min(max,n));
+const nowMs = () => Date.now();
+function binanceFuturesUrl(symbol) {
+  return `https://www.binance.com/en/futures/${encodeURIComponent(symbol)}`;
+}
+function getProxyUrl() {
+  return (localStorage.getItem(PROXY_URL_KEY) || DEFAULT_BINANCE_PROXY_URL || '').replace(/\/$/, '');
+}
+function getApiBase() {
+  return getProxyUrl() || DIRECT_BINANCE_API;
+}
+function initProxyFromSettings() {
+  if ($('proxyUrl')) $('proxyUrl').value = getProxyUrl();
+}
+
+function loadSignals() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveSignals(list) {
+  localStorage.setItem(STORE_KEY, JSON.stringify(list));
+  syncToSupabaseIfReady(list);
+}
+function setStatus(msg) { $('status').textContent = msg; }
+
+function initSupabaseFromSettings() {
+  const url = localStorage.getItem(SUPA_URL_KEY) || DEFAULT_SUPABASE_URL || '';
+  const key = localStorage.getItem(SUPA_KEY_KEY) || DEFAULT_SUPABASE_KEY || '';
+  const email = localStorage.getItem(SUPA_EMAIL_KEY) || DEFAULT_SUPABASE_EMAIL || '';
+  if ($('supaUrl')) $('supaUrl').value = url;
+  if ($('supaKey')) $('supaKey').value = key;
+  if ($('supaEmail')) $('supaEmail').value = email;
+  if (!url || !key || !window.supabase) return;
+  supabaseClient = window.supabase.createClient(url, key);
+  supabaseClient.auth.getSession().then(({ data }) => {
+    supabaseSession = data.session || null;
+    if (supabaseSession) setStatus(`Supabase connected: ${supabaseSession.user.email}`);
+  });
+  supabaseClient.auth.onAuthStateChange((_event, session) => { supabaseSession = session; });
+}
+
+function mapSignalToRow(s) {
+  return {
+    id: s.id,
+    symbol: s.symbol,
+    side: s.side,
+    status: s.status,
+    interval: s.interval,
+    score: s.score,
+    signal_time: new Date(s.signalTime).toISOString(),
+    updated_at: new Date().toISOString(),
+    payload: { ...s, __cloudUpdatedAt: new Date().toISOString() }
+  };
+}
+function rowToSignal(row) {
+  return row.payload ? { ...row.payload, __cloudUpdatedAt: row.updated_at } : row;
+}
+async function signInSupabase() {
+  if (!supabaseClient) initSupabaseFromSettings();
+  if (!supabaseClient) return setStatus('Chưa có Supabase URL/key. Hãy nhập rồi bấm Lưu config.');
+  const email = $('supaEmail').value.trim();
+  const password = $('supaPass').value;
+  if (!email || !password) return setStatus('Nhập email và password Supabase Auth trước.');
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  if (error) return setStatus('Login Supabase lỗi: ' + error.message);
+  supabaseSession = data.session;
+  localStorage.setItem(SUPA_EMAIL_KEY, email);
+  setStatus(`Login Supabase thành công: ${data.user.email}. Email đã được lưu, password không lưu.`);
+  await pullFromSupabase();
+}
+async function signOutSupabase() {
+  if (supabaseClient) await supabaseClient.auth.signOut();
+  supabaseSession = null;
+  setStatus('Đã logout Supabase. Local cache vẫn còn.');
+}
+async function syncToSupabaseIfReady(list = loadSignals()) {
+  if (!supabaseClient || !supabaseSession || cloudSyncBusy) return;
+  if (!Array.isArray(list) || !list.length) return;
+  cloudSyncBusy = true;
+  try {
+    const rows = list.slice(0, 600).map(mapSignalToRow);
+    const { error } = await supabaseClient.from('signals').upsert(rows, { onConflict: 'id' });
+    if (error) console.warn('Supabase sync error:', error.message);
+  } finally { cloudSyncBusy = false; }
+}
+async function pullFromSupabase() {
+  if (!supabaseClient || !supabaseSession) return setStatus('Chưa login Supabase.');
+  const { data, error } = await supabaseClient
+    .from('signals')
+    .select('id, updated_at, payload')
+    .order('signal_time', { ascending: false })
+    .limit(600);
+  if (error) return setStatus('Pull Supabase lỗi: ' + error.message);
+  const local = loadSignals();
+  const map = new Map(local.map(s => [s.id, s]));
+  for (const row of data || []) {
+    const cloud = rowToSignal(row);
+    const cur = map.get(cloud.id);
+    const cloudTime = Date.parse(cloud.__cloudUpdatedAt || row.updated_at || 0);
+    const localTime = Date.parse(cur?.__cloudUpdatedAt || cur?.lastCheckedAt || cur?.createdAt || 0);
+    if (!cur || cloudTime >= localTime) map.set(cloud.id, cloud);
+  }
+  const merged = Array.from(map.values()).sort((a,b)=>(b.signalTime||0)-(a.signalTime||0)).slice(0,600);
+  localStorage.setItem(STORE_KEY, JSON.stringify(merged));
+  renderLog(); renderStats(); updateMetrics(lastScanRows);
+  setStatus(`Pull Supabase xong: ${data?.length || 0} dòng cloud, local hiện có ${merged.length} tín hiệu.`);
+}
+async function pushToSupabase() {
+  if (!supabaseClient || !supabaseSession) return setStatus('Chưa login Supabase.');
+  await syncToSupabaseIfReady(loadSignals());
+  setStatus('Push local lên Supabase xong.');
+}
+
+async function getJSON(path) {
+  const base = getApiBase();
+  const r = await fetch(base + path, { method: 'GET' });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${base}${path}`);
+  return r.json();
+}
+async function testProxy() {
+  const url = $('proxyUrl').value.trim().replace(/\/$/, '');
+  if (!url) return setStatus('Chưa nhập Binance Proxy URL.');
+  if (!url.startsWith('https://')) return setStatus('Proxy URL phải bắt đầu bằng https://, ví dụ https://binance-proxy.xxx.workers.dev');
+  localStorage.setItem(PROXY_URL_KEY, url);
+  setStatus('Đang test proxy...');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const health = await fetch(url + '/health', { method: 'GET', signal: controller.signal });
+    if (!health.ok) throw new Error(`Health check lỗi: ${health.status} ${health.statusText}`);
+    const r = await fetch(url + '/fapi/v1/time', { method: 'GET', signal: controller.signal });
+    const text = await r.text();
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${text.slice(0, 180)}`);
+    let data;
+    try { data = JSON.parse(text); } catch { throw new Error('Proxy có trả response nhưng không phải JSON: ' + text.slice(0, 180)); }
+    if (!data.serverTime) throw new Error('Proxy chạy nhưng response không có serverTime: ' + text.slice(0, 180));
+    setStatus(`Proxy OK. Binance serverTime: ${data.serverTime}. Từ giờ tool sẽ gọi Binance qua Worker.`);
+  } catch (e) {
+    const msg = e.name === 'AbortError'
+      ? 'Timeout: Worker không phản hồi trong 12 giây.'
+      : e.message;
+    setStatus('Test proxy lỗi: ' + msg + ' | Hãy mở trực tiếp ProxyURL/health và ProxyURL/fapi/v1/time trên trình duyệt để kiểm tra.');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function ema(values, period) {
+  const k = 2 / (period + 1);
+  let e = values[0];
+  return values.map((v, i) => i === 0 ? e : (e = v * k + e * (1-k)));
+}
+function rsi(values, period=14) {
+  let gains = [], losses = [];
+  for (let i=1;i<values.length;i++) {
+    const diff = values[i] - values[i-1];
+    gains.push(Math.max(diff,0)); losses.push(Math.max(-diff,0));
+  }
+  let ag = avg(gains.slice(0, period)), al = avg(losses.slice(0, period));
+  let out = Array(period).fill(50);
+  for (let i=period;i<gains.length;i++) {
+    ag = (ag*(period-1)+gains[i])/period;
+    al = (al*(period-1)+losses[i])/period;
+    const rs = al === 0 ? 100 : ag/al;
+    out.push(100 - 100/(1+rs));
+  }
+  return out;
+}
+function macd(values) {
+  const e12 = ema(values,12), e26 = ema(values,26);
+  const line = values.map((_,i)=>e12[i]-e26[i]);
+  const signal = ema(line,9);
+  const hist = line.map((v,i)=>v-signal[i]);
+  return { line, signal, hist };
+}
+function atr(kl, period=14) {
+  const tr = [];
+  for (let i=1;i<kl.length;i++) {
+    const h = kl[i].high, l = kl[i].low, pc = kl[i-1].close;
+    tr.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)));
+  }
+  return ema(tr, period);
+}
+function adx(kl, period=14) {
+  let plusDM=[], minusDM=[], tr=[];
+  for (let i=1;i<kl.length;i++) {
+    const up = kl[i].high - kl[i-1].high;
+    const down = kl[i-1].low - kl[i].low;
+    plusDM.push(up > down && up > 0 ? up : 0);
+    minusDM.push(down > up && down > 0 ? down : 0);
+    const h=kl[i].high,l=kl[i].low,pc=kl[i-1].close;
+    tr.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)));
+  }
+  const atrv = ema(tr, period);
+  const pE = ema(plusDM, period), mE = ema(minusDM, period);
+  const pdi = plusDM.map((v,i)=>100*pE[i]/Math.max(atrv[i],1e-9));
+  const mdi = minusDM.map((v,i)=>100*mE[i]/Math.max(atrv[i],1e-9));
+  const dx = pdi.map((v,i)=>100*Math.abs(v-mdi[i])/Math.max(v+mdi[i],1e-9));
+  return ema(dx, period);
+}
+function vwap(kl, lookback=48) {
+  const s = kl.slice(-lookback);
+  let pv=0, vol=0;
+  for (const k of s) {
+    const typical = (k.high+k.low+k.close)/3;
+    pv += typical * k.volume;
+    vol += k.volume;
+  }
+  return pv / Math.max(vol, 1e-9);
+}
+function stabilityScore(kl) {
+  const last = kl.slice(-40);
+  const ranges = last.map(k => (k.high-k.low)/k.close*100);
+  const bodies = last.map(k => Math.abs(k.close-k.open)/Math.max(k.high-k.low,1e-9));
+  const rangeAvg = avg(ranges);
+  const wickNoise = 1 - avg(bodies);
+  const volCv = Math.sqrt(avg(ranges.map(x => Math.pow(x-rangeAvg,2)))) / Math.max(rangeAvg, 1e-9);
+  return clamp(100 - volCv*45 - wickNoise*30 - Math.max(0, rangeAvg-2.8)*10, 0, 100);
+}
+function parseKlines(rows) {
+  return rows.map(r => ({
+    time:r[0], open:+r[1], high:+r[2], low:+r[3], close:+r[4], volume:+r[5], closeTime:r[6]
+  }));
+}
+function makeSignalId(r, interval, signalTime) {
+  const bucket = Math.floor(signalTime / 60000);
+  return `${r.symbol}_${interval}_${r.side}_${bucket}`;
+}
+function isDuplicateSignal(existing, candidate) {
+  const dupWindow = +$('dupMin').value * 60 * 1000;
+  const nearEntryPct = Math.abs(existing.entry - candidate.entry) / candidate.entry * 100;
+  return existing.symbol === candidate.symbol &&
+    existing.interval === candidate.interval &&
+    existing.side === candidate.side &&
+    Math.abs(existing.signalTime - candidate.signalTime) <= dupWindow &&
+    nearEntryPct <= 0.55 &&
+    !['WIN','LOSS','EXPIRED','CANCELLED'].includes(existing.status);
+}
+
+async function scanSymbol(t, interval) {
+  const rows = await getJSON(`/fapi/v1/klines?symbol=${t.symbol}&interval=${interval}&limit=160`);
+  const kl = parseKlines(rows);
+  const closes = kl.map(k=>k.close);
+  const vols = kl.map(k=>k.volume);
+  const last = kl[kl.length-1];
+  const e20 = ema(closes,20), e50 = ema(closes,50), e200 = ema(closes,120);
+  const r = rsi(closes,14);
+  const m = macd(closes);
+  const a = atr(kl,14);
+  const ax = adx(kl,14);
+  const vw = vwap(kl,48);
+  const stab = stabilityScore(kl);
+  const price = last.close;
+  const atrNow = a[a.length-1] || price*0.008;
+  const volNow = vols[vols.length-1];
+  const volMean = avg(vols.slice(-30));
+
+  const upTrend = price > e20.at(-1) && e20.at(-1) > e50.at(-1) && e50.at(-1) > e200.at(-1);
+  const downTrend = price < e20.at(-1) && e20.at(-1) < e50.at(-1) && e50.at(-1) < e200.at(-1);
+  const macdUp = m.hist.at(-1) > 0 && m.hist.at(-1) > m.hist.at(-2);
+  const macdDown = m.hist.at(-1) < 0 && m.hist.at(-1) < m.hist.at(-2);
+  const adxStrong = ax.at(-1) >= 18;
+  const volOk = volNow >= volMean * 0.75;
+  const notOverLong = r.at(-1) < 72;
+  const notOverShort = r.at(-1) > 28;
+  const nearEntry = Math.abs(price - e20.at(-1)) / price * 100 < 1.25 || Math.abs(price - vw) / price * 100 < 1.5;
+
+  let side = "WAIT", score = 0, reasons = [];
+  const base = (stab*0.25) + (adxStrong ? 16 : 5) + (volOk ? 12 : 4) + (nearEntry ? 12 : 3);
+  const longScore = base + (upTrend?24:0) + (macdUp?14:0) + (price>vw?8:0) + (notOverLong?8:0);
+  const shortScore = base + (downTrend?24:0) + (macdDown?14:0) + (price<vw?8:0) + (notOverShort?8:0);
+
+  if (longScore >= shortScore && longScore >= 55) { side = "LONG"; score = longScore; }
+  else if (shortScore > longScore && shortScore >= 55) { side = "SHORT"; score = shortScore; }
+  else { score = Math.max(longScore, shortScore); }
+
+  if (upTrend) reasons.push("EMA20 > EMA50 > EMA lớn");
+  if (downTrend) reasons.push("EMA20 < EMA50 < EMA lớn");
+  if (macdUp) reasons.push("MACD histogram tăng");
+  if (macdDown) reasons.push("MACD histogram giảm");
+  if (adxStrong) reasons.push(`ADX ${fmt(ax.at(-1),1)} có trend`);
+  if (price > vw) reasons.push("Giá trên VWAP"); else reasons.push("Giá dưới VWAP");
+  if (stab >= 65) reasons.push(`Nến ổn định ${fmt(stab,0)}/100`);
+
+  const entry = side === "LONG" ? Math.min(price, e20.at(-1)*1.002) : side === "SHORT" ? Math.max(price, e20.at(-1)*0.998) : price;
+  const sl = side === "LONG" ? entry - atrNow*1.15 : side === "SHORT" ? entry + atrNow*1.15 : null;
+  const tp1 = side === "LONG" ? entry + atrNow*1.25 : side === "SHORT" ? entry - atrNow*1.25 : null;
+  const tp2 = side === "LONG" ? entry + atrNow*2.0 : side === "SHORT" ? entry - atrNow*2.0 : null;
+  const rr = tp2 && sl ? Math.abs(tp2-entry)/Math.abs(entry-sl) : 0;
+
+  return {
+    symbol: t.symbol,
+    quoteVolume: +t.quoteVolume,
+    change: +t.priceChangePercent,
+    price, side, score: Math.round(clamp(score,0,100)), entry, sl, tp1, tp2, rr,
+    rsi: r.at(-1), adx: ax.at(-1), macdHist: m.hist.at(-1), ema20: e20.at(-1), ema50: e50.at(-1), vwap: vw,
+    stability: Math.round(stab), reasons,
+    rawSignalCloseTime: last.closeTime
+  };
+}
+
+function createSignalsFromScan(rows) {
+  const minScore = +$('minScore').value;
+  const interval = $('interval').value;
+  let signals = loadSignals();
+  let newCount = 0;
+  const signalTime = nowMs();
+
+  for (const r of rows) {
+    if (r.side === 'WAIT' || r.score < minScore) continue;
+    const candidate = {
+      id: makeSignalId(r, interval, signalTime),
+      symbol: r.symbol,
+      interval,
+      trackInterval: $('trackInterval').value,
+      side: r.side,
+      score: r.score,
+      stability: r.stability,
+      quoteVolume: r.quoteVolume,
+      signalPrice: r.price,
+      entry: r.entry,
+      sl: r.sl,
+      tp1: r.tp1,
+      tp2: r.tp2,
+      rr: r.rr,
+      rsi: r.rsi,
+      adx: r.adx,
+      vwap: r.vwap,
+      ema20: r.ema20,
+      ema50: r.ema50,
+      reasons: r.reasons,
+      signalTime,
+      createdAt: new Date(signalTime).toISOString(),
+      status: 'NEW',
+      entryHitTime: null,
+      tp1HitTime: null,
+      tp2HitTime: null,
+      slHitTime: null,
+      closeTime: null,
+      result: null,
+      mfe: 0,
+      mae: 0,
+      lastCheckedAt: null,
+      notes: []
+    };
+    if (!signals.some(s => isDuplicateSignal(s, candidate))) {
+      signals.unshift(candidate);
+      newCount++;
+    }
+  }
+  signals = signals.slice(0, 600);
+  saveSignals(signals);
+  return newCount;
+}
+
+async function scan() {
+  const btn = $('scanBtn');
+  btn.disabled = true;
+  setStatus('Đang lấy danh sách symbol USDT Perpetual và lọc top volume...');
+  try {
+    const [info, tickers] = await Promise.all([
+      getJSON('/fapi/v1/exchangeInfo'),
+      getJSON('/fapi/v1/ticker/24hr')
+    ]);
+    const tradable = new Set(info.symbols.filter(s => s.contractType === 'PERPETUAL' && s.quoteAsset === 'USDT' && s.status === 'TRADING').map(s => s.symbol));
+    const minVol = +$('minVol').value;
+    const topN = +$('topN').value;
+    const interval = $('interval').value;
+    const baseList = tickers
+      .filter(t => tradable.has(t.symbol) && +t.quoteVolume >= minVol)
+      .sort((a,b)=>+b.quoteVolume - +a.quoteVolume)
+      .slice(0, topN);
+
+    const results = [];
+    for (let i=0;i<baseList.length;i++) {
+      setStatus(`Đang đọc chỉ báo ${i+1}/${baseList.length}: ${baseList[i].symbol}`);
+      try { results.push(await scanSymbol(baseList[i], interval)); } catch(e) { console.warn(e); }
+      await sleep(90);
+    }
+    lastScanRows = results;
+    const newCount = createSignalsFromScan(results);
+    renderScan(results);
+    renderLog();
+    renderStats();
+    setStatus(`Hoàn tất. Đã quét ${results.length} symbol, tạo ${newCount} tín hiệu mới. Tín hiệu cũ không bị đổi Signal Time.`);
+  } catch (e) {
+    setStatus('Lỗi lấy dữ liệu: ' + e.message + '. Nếu bị Failed to fetch/CORS, hãy chạy qua Cloudflare Worker proxy.');
+  } finally { btn.disabled = false; }
+}
+
+async function forwardTestOne(s) {
+  const rows = await getJSON(`/fapi/v1/klines?symbol=${s.symbol}&interval=${s.trackInterval || $('trackInterval').value}&startTime=${s.signalTime}&limit=1000`);
+  const kl = parseKlines(rows);
+  const expireAt = s.signalTime + (+$('expireHours').value * 60 * 60 * 1000);
+  let entered = Boolean(s.entryHitTime);
+  let maxFav = s.mfe || 0;
+  let maxAdv = s.mae || 0;
+
+  for (const k of kl) {
+    if (k.time < s.signalTime) continue;
+    if (k.time > expireAt && !entered) {
+      s.status = 'EXPIRED';
+      s.closeTime = k.time;
+      s.result = 'NO_ENTRY_EXPIRED';
+      break;
+    }
+
+    if (!entered) {
+      const hitEntry = s.side === 'LONG' ? k.low <= s.entry : k.high >= s.entry;
+      if (hitEntry) {
+        entered = true;
+        s.entryHitTime = k.time;
+        s.status = 'OPEN';
+        s.notes.push(`Entry hit ${new Date(k.time).toLocaleString('vi-VN')}`);
+      } else {
+        continue;
+      }
+    }
+
+    const fav = s.side === 'LONG' ? (k.high - s.entry) / s.entry * 100 : (s.entry - k.low) / s.entry * 100;
+    const adv = s.side === 'LONG' ? (s.entry - k.low) / s.entry * 100 : (k.high - s.entry) / s.entry * 100;
+    maxFav = Math.max(maxFav, fav);
+    maxAdv = Math.max(maxAdv, adv);
+
+    const hitSL = s.side === 'LONG' ? k.low <= s.sl : k.high >= s.sl;
+    const hitTP1 = s.side === 'LONG' ? k.high >= s.tp1 : k.low <= s.tp1;
+    const hitTP2 = s.side === 'LONG' ? k.high >= s.tp2 : k.low <= s.tp2;
+
+    if (hitTP1 && !s.tp1HitTime) s.tp1HitTime = k.time;
+
+    // Nếu cùng 1 cây nến vừa chạm SL vừa chạm TP, chọn quy tắc bảo thủ: SL trước nếu chưa có TP1 trước đó.
+    if (hitSL && !s.tp1HitTime) {
+      s.status = 'LOSS';
+      s.slHitTime = k.time;
+      s.closeTime = k.time;
+      s.result = 'SL_BEFORE_TP1';
+      break;
+    }
+    if (hitTP2) {
+      s.status = 'WIN';
+      s.tp2HitTime = k.time;
+      s.closeTime = k.time;
+      s.result = 'TP2_HIT';
+      break;
+    }
+    if (hitSL) {
+      s.status = s.tp1HitTime ? 'WIN' : 'LOSS';
+      s.slHitTime = k.time;
+      s.closeTime = k.time;
+      s.result = s.tp1HitTime ? 'TP1_THEN_SL' : 'SL_HIT';
+      break;
+    }
+  }
+  s.mfe = maxFav;
+  s.mae = maxAdv;
+  s.lastCheckedAt = new Date().toISOString();
+  return s;
+}
+
+async function forwardTestAll() {
+  const btn = $('forwardBtn');
+  btn.disabled = true;
+  let signals = loadSignals();
+  const active = signals.filter(s => ['NEW','OPEN'].includes(s.status));
+  try {
+    for (let i=0;i<active.length;i++) {
+      setStatus(`Forward-test ${i+1}/${active.length}: ${active[i].symbol} ${active[i].side}`);
+      const updated = await forwardTestOne(active[i]);
+      signals = signals.map(s => s.id === updated.id ? updated : s);
+      saveSignals(signals);
+      renderLog();
+      renderStats();
+      await sleep(120);
+    }
+    setStatus(`Forward-test xong ${active.length} tín hiệu đang mở/chờ entry.`);
+  } catch(e) {
+    setStatus('Lỗi forward-test: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    updateMetrics(lastScanRows);
+  }
+}
+
+function renderScan(rows) {
+  const minScore = +$('minScore').value;
+  const sideFilter = $('sideFilter').value;
+  const sortBy = $('sortBy').value;
+  let data = rows.filter(r => sideFilter === 'ALL' || r.side === sideFilter);
+  data.sort((a,b) => {
+    if (sortBy === 'stability') return b.stability - a.stability;
+    if (sortBy === 'volume') return b.quoteVolume - a.quoteVolume;
+    if (sortBy === 'rr') return b.rr - a.rr;
+    return b.score - a.score;
+  });
+  $('tbody').innerHTML = data.map(r => {
+    const cls = r.side === 'LONG' ? 'long' : r.side === 'SHORT' ? 'short' : 'wait';
+    const scoreCls = r.score >= minScore ? 'good' : r.score >= 55 ? 'warn' : 'bad';
+    return `<tr>
+      <td><a class="symbol-link" href="${binanceFuturesUrl(r.symbol)}" target="_blank" rel="noopener noreferrer">${r.symbol}</a><br><span class="muted">Vol ${fmt(r.quoteVolume/1e6,1)}M · 24h ${fmt(r.change,2)}%</span></td>
+      <td><span class="tag ${cls}">${r.side}</span></td>
+      <td><span class="score ${scoreCls}">${r.score}</span><br><span class="muted">Stable ${r.stability}/100</span></td>
+      <td>Giá: <b>${fmt(r.price,6)}</b><br>Entry nghiên cứu: <b>${fmt(r.entry,6)}</b></td>
+      <td>${r.side === 'WAIT' ? '<span class="muted">Chưa đủ điều kiện</span>' : `SL: <b>${fmt(r.sl,6)}</b><br>TP1: <b>${fmt(r.tp1,6)}</b><br>TP2: <b>${fmt(r.tp2,6)}</b><br>RR: <b>${fmt(r.rr,2)}</b>`}</td>
+      <td><span class="pill">RSI ${fmt(r.rsi,1)}</span><span class="pill">ADX ${fmt(r.adx,1)}</span><span class="pill">EMA20 ${fmt(r.ema20,6)}</span><span class="pill">EMA50 ${fmt(r.ema50,6)}</span><span class="pill">VWAP ${fmt(r.vwap,6)}</span></td>
+      <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}</td>
+    </tr>`;
+  }).join('');
+  updateMetrics(rows);
+}
+
+function statusClass(st) {
+  if (st === 'WIN') return 'win';
+  if (st === 'LOSS') return 'loss';
+  if (st === 'EXPIRED' || st === 'CANCELLED') return 'expired';
+  if (st === 'OPEN') return 'open';
+  return 'wait';
+}
+function renderLog() {
+  const signals = loadSignals();
+  $('logBody').innerHTML = signals.map(s => `
+    <tr>
+      <td><a class="symbol-link" href="${binanceFuturesUrl(s.symbol)}" target="_blank" rel="noopener noreferrer">${s.symbol}</a><br><a class="id signal-link" href="${binanceFuturesUrl(s.symbol)}" target="_blank" rel="noopener noreferrer">${s.id}</a><br><span class="muted">Score ${s.score} · Stable ${s.stability}</span></td>
+      <td><span class="tag ${s.side === 'LONG' ? 'long' : 'short'}">${s.side}</span></td>
+      <td><span class="tag ${statusClass(s.status)}">${s.status}</span><br><span class="muted">${s.result || ''}</span></td>
+      <td>Entry <b>${fmt(s.entry,6)}</b><br>SL <b>${fmt(s.sl,6)}</b><br>TP1 <b>${fmt(s.tp1,6)}</b><br>TP2 <b>${fmt(s.tp2,6)}</b></td>
+      <td>${new Date(s.signalTime).toLocaleString('vi-VN')}<br><span class="muted">TF ${s.interval} · Track ${s.trackInterval}</span></td>
+      <td>${s.entryHitTime ? `Entry: ${new Date(s.entryHitTime).toLocaleString('vi-VN')}<br>` : 'Entry: chưa khớp<br>'}
+          ${s.tp1HitTime ? `TP1: ${new Date(s.tp1HitTime).toLocaleString('vi-VN')}<br>` : ''}
+          ${s.tp2HitTime ? `TP2: ${new Date(s.tp2HitTime).toLocaleString('vi-VN')}<br>` : ''}
+          ${s.slHitTime ? `SL: ${new Date(s.slHitTime).toLocaleString('vi-VN')}<br>` : ''}
+          <span class="muted">MFE ${fmt(s.mfe,2)}% · MAE ${fmt(s.mae,2)}%</span></td>
+      <td><button class="smallbtn secondary" onclick="cancelSignal('${s.id}')">Cancel</button></td>
+    </tr>`).join('');
+  updateMetrics(lastScanRows);
+}
+function cancelSignal(id) {
+  const signals = loadSignals().map(s => s.id === id ? {...s, status:'CANCELLED', result:'MANUAL_CANCELLED', closeTime: Date.now()} : s);
+  saveSignals(signals);
+  renderLog(); renderStats();
+}
+
+function renderStats() {
+  const done = loadSignals().filter(s => ['WIN','LOSS'].includes(s.status));
+  const groups = new Map();
+  for (const s of done) {
+    const keys = [`SYMBOL ${s.symbol}`, `SIDE ${s.side}`, `TF ${s.interval}`, `SCORE ${Math.floor(s.score/10)*10}+`];
+    for (const k of keys) {
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(s);
+    }
+  }
+  const rows = Array.from(groups.entries()).map(([k, arr]) => {
+    const win = arr.filter(s=>s.status==='WIN').length;
+    const loss = arr.filter(s=>s.status==='LOSS').length;
+    const tp1 = arr.filter(s=>s.tp1HitTime).length;
+    const wr = arr.length ? win/arr.length*100 : 0;
+    return { k, total: arr.length, win, loss, tp1, wr };
+  }).sort((a,b)=>b.total-a.total || b.wr-a.wr).slice(0,80);
+
+  $('statsBody').innerHTML = rows.map(r => `
+    <tr>
+      <td><b>${r.k}</b></td>
+      <td>${r.total}</td>
+      <td class="good">${r.win}</td>
+      <td class="bad">${r.loss}</td>
+      <td><b>${fmt(r.wr,1)}%</b></td>
+      <td>${fmt(r.tp1 / Math.max(1,r.total) * 100,1)}%</td>
+      <td class="muted">Cần tối thiểu 30+ mẫu để đáng tin hơn.</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">Chưa có lệnh WIN/LOSS để thống kê.</td></tr>';
+}
+
+function updateMetrics(rows=[]) {
+  const signals = loadSignals();
+  const newSig = signals.filter(s=>s.status==='NEW').length;
+  const open = signals.filter(s=>['NEW','OPEN'].includes(s.status)).length;
+  const win = signals.filter(s=>s.status==='WIN').length;
+  const loss = signals.filter(s=>s.status==='LOSS').length;
+  $('mScanned').textContent = rows.length || lastScanRows.length || 0;
+  $('mNew').textContent = newSig;
+  $('mOpen').textContent = open;
+  $('mWL').textContent = `${win} / ${loss}`;
+  $('mSide').textContent = `${signals.filter(r=>r.side==='LONG').length} / ${signals.filter(r=>r.side==='SHORT').length}`;
+  $('mTime').textContent = new Date().toLocaleTimeString('vi-VN');
+}
+
+function showTab(name) {
+  $('scanView').classList.toggle('hidden', name !== 'scan');
+  $('logView').classList.toggle('hidden', name !== 'log');
+  $('statsView').classList.toggle('hidden', name !== 'stats');
+  $('tabScan').classList.toggle('active', name === 'scan');
+  $('tabLog').classList.toggle('active', name === 'log');
+  $('tabStats').classList.toggle('active', name === 'stats');
+}
+
+$('scanBtn').onclick = scan;
+$('forwardBtn').onclick = forwardTestAll;
+$('autoBtn').onclick = () => {
+  if (autoTimer) {
+    clearInterval(autoTimer); autoTimer = null;
+    $('autoBtn').textContent = 'Bật auto scan';
+    setStatus('Đã tắt auto scan.');
+  } else {
+    scan();
+    autoTimer = setInterval(async () => { await scan(); await forwardTestAll(); }, +$('scanSec').value * 1000);
+    $('autoBtn').textContent = 'Tắt auto scan';
+  }
+};
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify(loadSignals(), null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `forward-test-log-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+};
+$('clearBtn').onclick = () => {
+  if (confirm('Xóa toàn bộ forward-test log trên trình duyệt này?')) {
+    localStorage.removeItem(STORE_KEY);
+    renderLog(); renderStats(); updateMetrics([]);
+    setStatus('Đã xóa log local.');
+  }
+};
+$('tabScan').onclick = () => showTab('scan');
+$('tabLog').onclick = () => showTab('log');
+$('tabStats').onclick = () => showTab('stats');
+['sideFilter','sortBy'].forEach(id => $(id).addEventListener('change', () => renderScan(lastScanRows)));
+$('proxySaveBtn').onclick = () => {
+  const url = $('proxyUrl').value.trim().replace(/\/$/, '');
+  localStorage.setItem(PROXY_URL_KEY, url);
+  setStatus(url ? `Đã lưu Binance proxy: ${url}` : 'Đã xóa proxy, tool sẽ gọi trực tiếp Binance.');
+};
+$('proxyTestBtn').onclick = testProxy;
+$('supaSaveBtn').onclick = () => {
+  localStorage.setItem(SUPA_URL_KEY, $('supaUrl').value.trim());
+  localStorage.setItem(SUPA_KEY_KEY, $('supaKey').value.trim());
+  localStorage.setItem(SUPA_EMAIL_KEY, $('supaEmail').value.trim());
+  initSupabaseFromSettings();
+  setStatus('Đã lưu Supabase URL/key/email trên trình duyệt này. Password không được lưu vì lý do bảo mật.');
+};
+$('supaLoginBtn').onclick = signInSupabase;
+$('supaLogoutBtn').onclick = signOutSupabase;
+$('supaPullBtn').onclick = pullFromSupabase;
+$('supaPushBtn').onclick = pushToSupabase;
+
+initProxyFromSettings();
+initSupabaseFromSettings();
+renderLog();
+renderStats();
+updateMetrics([]);
+</script>
+</body>
+</html>
