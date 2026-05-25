@@ -323,10 +323,23 @@
           </label>
         </div>
         <div class="row">
+          <label>Compact closed sau, giờ
+            <input id="compactHours" type="number" min="6" max="168" value="24" />
+          </label>
+          <label>Giữ raw closed tối đa
+            <input id="maxClosedRaw" type="number" min="50" max="2000" value="300" />
+          </label>
+        </div>
+        <div class="row">
           <button id="newBatchBtn" class="secondary">Tạo batch mới</button>
           <button id="batchSummaryBtn" class="secondary">Tóm tắt batch</button>
         </div>
+        <div class="row">
+          <button id="compactBtn" class="secondary">Compact learning</button>
+          <button id="clearSummaryBtn" class="danger">Xóa learning summary</button>
+        </div>
         <button id="autoBtn" class="secondary">Bật auto scan</button>
+        <div class="hint">Auto scan: Scan → Forward-test → Push local. Push local luôn là bước cuối cùng.</div>
         <button id="exportBtn" class="secondary">Export log JSON</button>
         <button id="importBtn" class="secondary">Import log JSON</button>
         <input id="importFile" type="file" accept="application/json,.json" style="display:none" />
@@ -485,7 +498,51 @@ let cloudSyncBusy = false;
 let lastBtcTrend = { mode: 'UNKNOWN', longOk: true, shortOk: true, note: 'BTC filter chưa chạy', adx: 0, change1h: 0, change4h: 0, price: 0 };
 let apiHealth = { status: 'UNKNOWN', lastOk: null, lastError: '', requestCount: 0 };
 const BATCH_KEY = 'fta_current_batch_v4_5';
+const LEARNING_SUMMARY_KEY = 'fta_learning_summary_v4_5';
 const CONFIG_STORE_KEY = 'fta_indicator_scanner_v4_2_config';
+function loadLearningSummary() {
+  try { return JSON.parse(localStorage.getItem(LEARNING_SUMMARY_KEY) || '{}'); } catch { return {}; }
+}
+function saveLearningSummary(summary) {
+  localStorage.setItem(LEARNING_SUMMARY_KEY, JSON.stringify(summary || {}));
+}
+function learningBucketForSignal(s) {
+  const rsBucket = (v) => {
+    const n = Number(v || 0);
+    if (n >= 1) return 'RS >= +1%';
+    if (n >= 0) return 'RS 0~+1%';
+    if (n <= -1) return 'RS <= -1%';
+    return 'RS 0~-1%';
+  };
+  return [
+    `LEVEL ${s.signalLevel || 'LEGACY'}`,
+    `RS1H ${rsBucket(s.rs1h)}`,
+    `RS4H ${rsBucket(s.rs4h)}`,
+    `BATCH ${s.batchId || 'NO_BATCH'}`,
+    `PLAN ${(s.planQuality && s.planQuality.grade) || 'UNKNOWN'}`,
+    `SYMBOL ${s.symbol}`,
+    `SIDE ${s.side}`,
+    `SETUP ${s.setupType || 'UNKNOWN'}`,
+    `TF ${s.interval}`
+  ];
+}
+function addSignalToLearningSummary(summary, s) {
+  const keys = learningBucketForSignal(s);
+  for (const key of keys) {
+    if (!summary[key]) summary[key] = { total:0, tp2:0, tp1Only:0, loss:0, weak:0, expired:0, cancelled:0, updatedAt:null };
+    const row = summary[key];
+    row.total++;
+    if (isFullWinStatus(s.status)) row.tp2++;
+    else if (isTp1OnlyStatus(s.status)) row.tp1Only++;
+    else if (isLossStatus(s.status)) row.loss++;
+    else if (isWeakStatus(s.status)) row.weak++;
+    else if (s.status === 'EXPIRED') row.expired++;
+    else if (s.status === 'CANCELLED') row.cancelled++;
+    row.updatedAt = new Date().toISOString();
+  }
+  return summary;
+}
+
 function getCurrentBatch() {
   let batch = localStorage.getItem(BATCH_KEY) || '';
   if (!batch) {
@@ -535,7 +592,7 @@ function setStatus(msg) {
 }
 
 function getConfigFields() {
-  return ['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','batchName','proxyUrl','supaUrl','supaKey','supaEmail'];
+  return ['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','batchName','compactHours','maxClosedRaw','proxyUrl','supaUrl','supaKey','supaEmail'];
 }
 function collectConfig() {
   const cfg = {};
@@ -680,6 +737,30 @@ async function pullFromSupabase() {
   renderLog(); renderStats(); updateMetrics(lastScanRows);
   setStatus(`Pull Supabase xong: ${data?.length || 0} dòng cloud, local hiện có ${merged.length} tín hiệu.`);
 }
+async function autoCompactLearningAfterCycle() {
+  try {
+    const result = compactLearning({ pushCloud:false });
+    if (result.compacted || result.removed) {
+      console.log('Auto compact learning', result);
+    }
+  } catch (e) {
+    console.warn('Auto compact learning error', e);
+  }
+}
+
+async function autoPushLocalAfterCycle() {
+  if (!supabaseClient || !supabaseSession) {
+    setStatus('Auto scan xong. Chưa login Supabase nên bỏ qua bước Push local.');
+    return;
+  }
+  try {
+    await pushToSupabase();
+    setStatus('Auto scan xong → Forward-test xong → Đã Push local lên cloud.');
+  } catch (e) {
+    setStatus('Auto scan xong nhưng Push local lỗi: ' + e.message);
+  }
+}
+
 async function pushToSupabase() {
   if (!supabaseClient || !supabaseSession) return setStatus('Chưa login Supabase.');
   await syncToSupabaseIfReady(loadSignals());
@@ -835,7 +916,8 @@ function isFullWinStatus(status) { return ['TP2_WIN','WIN'].includes(status); }
 function isTp1OnlyStatus(status) { return ['TP1_ONLY'].includes(status); }
 function isLossStatus(status) { return status === 'LOSS'; }
 function isWeakStatus(status) { return status === 'WEAK_AFTER_ENTRY'; }
-function isClosedResultStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN','WEAK_AFTER_ENTRY'].includes(status); }
+function isClosedResultStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN','WEAK_AFTER_ENTRY','EXPIRED','CANCELLED'].includes(status); }
+function isCompactableStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN','WEAK_AFTER_ENTRY','EXPIRED','CANCELLED'].includes(status); }
 function calcLearningRates(arr) {
   const total = arr.length;
   const tp2 = arr.filter(s => isFullWinStatus(s.status)).length;
@@ -1444,32 +1526,87 @@ function summarizeCurrentBatch() {
   showTab('stats');
   renderStats();
 }
+function compactLearning({ pushCloud=false } = {}) {
+  const now = Date.now();
+  const compactMs = (+$('compactHours').value || 24) * 60 * 60 * 1000;
+  const maxClosedRaw = +$('maxClosedRaw').value || 300;
+  let signals = loadSignals();
+  let summary = loadLearningSummary();
+  const closed = signals.filter(s => isCompactableStatus(s.status));
+  const oldClosedIds = new Set(closed
+    .filter(s => !s.compactedAt && (now - (s.closeTime || s.signalTime || 0)) >= compactMs)
+    .map(s => s.id));
+
+  let compacted = 0;
+  for (const s of signals) {
+    if (oldClosedIds.has(s.id)) {
+      summary = addSignalToLearningSummary(summary, s);
+      s.compactedAt = new Date().toISOString();
+      compacted++;
+    }
+  }
+  saveLearningSummary(summary);
+
+  // Giữ active + raw closed mới nhất, xóa closed đã compact để giảm tải.
+  const sortedClosedRaw = signals
+    .filter(s => isCompactableStatus(s.status) && !s.compactedAt)
+    .sort((a,b)=>(b.closeTime || b.signalTime || 0)-(a.closeTime || a.signalTime || 0));
+  const keepClosedRaw = new Set(sortedClosedRaw.slice(0, maxClosedRaw).map(s => s.id));
+  const before = signals.length;
+  signals = signals.filter(s => {
+    if (!isCompactableStatus(s.status)) return true;
+    if (!s.compactedAt) return keepClosedRaw.has(s.id);
+    return false;
+  });
+  const removed = before - signals.length;
+  saveSignals(signals);
+  renderLog(); renderStats(); updateMetrics(lastScanRows);
+  setStatus(`Compact learning xong: compact ${compacted} signal, xóa raw ${removed} signal khỏi local. Learning Stats vẫn giữ dữ liệu đã học.`);
+  if (pushCloud && supabaseClient && supabaseSession) pushToSupabase();
+  return { compacted, removed };
+}
+async function clearLearningSummary() {
+  const ok = confirm('Xóa toàn bộ Learning Summary đã compact? Hành động này sẽ làm mất dữ liệu học tổng hợp, nhưng không xóa raw Forward Log hiện tại.');
+  if (!ok) return;
+  saveLearningSummary({});
+  renderStats();
+  setStatus('Đã xóa Learning Summary local. Raw Forward Test Log không bị xóa.');
+}
 
 function renderStats() {
   const done = loadSignals().filter(s => isClosedResultStatus(s.status));
+  const summary = loadLearningSummary();
   const groups = new Map();
-  const addGroup = (key, s) => {
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(s);
+  const addGroup = (key, value) => {
+    if (!groups.has(key)) groups.set(key, { total:0, tp2:0, tp1Only:0, loss:0, weak:0, expired:0, cancelled:0, source:'raw' });
+    const row = groups.get(key);
+    row.total += value.total || 0;
+    row.tp2 += value.tp2 || 0;
+    row.tp1Only += value.tp1Only || 0;
+    row.loss += value.loss || 0;
+    row.weak += value.weak || 0;
+    row.expired += value.expired || 0;
+    row.cancelled += value.cancelled || 0;
+    if (value.source === 'summary') row.source = row.source === 'raw' ? 'raw+summary' : 'summary';
   };
-  const rsBucket = (v) => {
-    const n = Number(v || 0);
-    if (n >= 1) return 'mạnh hơn BTC >= +1%';
-    if (n >= 0) return 'hơi mạnh hơn BTC 0~1%';
-    if (n <= -1) return 'yếu hơn BTC <= -1%';
-    return 'hơi yếu hơn BTC 0~-1%';
-  };
+
+  Object.entries(summary).forEach(([k, v]) => addGroup(k, {...v, source:'summary'}));
+
   for (const s of done) {
-    addGroup(`LEVEL ${s.signalLevel || 'LEGACY'}`, s);
-    addGroup(`RS1H ${rsBucket(s.rs1h)}`, s);
-    addGroup(`RS4H ${rsBucket(s.rs4h)}`, s);
-    addGroup(`BATCH ${s.batchId || 'NO_BATCH'}`, s);
-    addGroup(`PLAN ${(s.planQuality && s.planQuality.grade) || 'UNKNOWN'}`, s);
-    addGroup(`SYMBOL ${s.symbol}`, s);
-    addGroup(`SIDE ${s.side}`, s);
-    addGroup(`TF ${s.interval}`, s);
-    addGroup(`SCORE ${Math.floor((s.score || 0)/10)*10}+`, s);
+    if (s.compactedAt) continue;
+    const value = {
+      total: 1,
+      tp2: isFullWinStatus(s.status) ? 1 : 0,
+      tp1Only: isTp1OnlyStatus(s.status) ? 1 : 0,
+      loss: isLossStatus(s.status) ? 1 : 0,
+      weak: isWeakStatus(s.status) ? 1 : 0,
+      expired: s.status === 'EXPIRED' ? 1 : 0,
+      cancelled: s.status === 'CANCELLED' ? 1 : 0,
+      source: 'raw'
+    };
+    learningBucketForSignal(s).forEach(k => addGroup(k, value));
   }
+
   const priority = (k) => {
     if (k.startsWith('LEVEL')) return 1;
     if (k.startsWith('RS')) return 2;
@@ -1479,22 +1616,17 @@ function renderStats() {
     if (k.startsWith('SIDE')) return 6;
     return 9;
   };
-  const rows = Array.from(groups.entries()).map(([k, arr]) => {
-    const tp2 = arr.filter(s=>isFullWinStatus(s.status)).length;
-    const tp1Only = arr.filter(s=>isTp1OnlyStatus(s.status)).length;
-    const loss = arr.filter(s=>isLossStatus(s.status)).length;
-    const weak = arr.filter(s=>isWeakStatus(s.status)).length;
-    const tp1Reach = arr.filter(s=>s.tp1HitTime || isFullWinStatus(s.status) || isTp1OnlyStatus(s.status)).length;
-    const tp2Rate = arr.length ? tp2/arr.length*100 : 0;
-    const reactionRate = arr.length ? tp1Reach/arr.length*100 : 0;
-    const lossRate = arr.length ? loss/arr.length*100 : 0;
-    const weakRate = arr.length ? weak/arr.length*100 : 0;
-    return { k, total: arr.length, tp2, tp1Only, loss, weak, tp1Reach, tp2Rate, reactionRate, lossRate, weakRate };
-  }).sort((a,b)=>priority(a.k)-priority(b.k) || b.total-a.total || b.tp2Rate-a.tp2Rate).slice(0,120);
+  const rows = Array.from(groups.entries()).map(([k, r]) => {
+    const tp2Rate = r.total ? r.tp2/r.total*100 : 0;
+    const reactionRate = r.total ? (r.tp2 + r.tp1Only)/r.total*100 : 0;
+    const lossRate = r.total ? r.loss/r.total*100 : 0;
+    const weakRate = r.total ? r.weak/r.total*100 : 0;
+    return { k, ...r, tp2Rate, reactionRate, lossRate, weakRate };
+  }).sort((a,b)=>priority(a.k)-priority(b.k) || b.total-a.total || b.tp2Rate-a.tp2Rate).slice(0,160);
 
   $('statsBody').innerHTML = rows.map(r => `
     <tr>
-      <td><b>${r.k}</b></td>
+      <td><b>${r.k}</b><br><span class="muted">${r.source}</span></td>
       <td>${r.total}</td>
       <td class="good">${r.tp2}</td>
       <td class="warn">${r.tp1Only}</td>
@@ -1503,8 +1635,8 @@ function renderStats() {
       <td>${fmt(r.reactionRate,1)}%</td>
       <td class="bad">${fmt(r.lossRate,1)}%</td>
       <td class="warn">${fmt(r.weakRate || 0,1)}%</td>
-      <td class="muted">Dùng để so sánh Level, RS vs BTC, Batch, Plan và symbol/side. TP2 rate = full winrate; Reaction = TP1 hoặc TP2; Weak = entry không đủ lực.</td>
-    </tr>`).join('') || '<tr><td colspan="10" class="muted">Chưa có lệnh TP2/TP1/Loss/Weak để thống kê.</td></tr>';
+      <td class="muted">Stats gồm raw log hiện tại + Learning Summary đã compact. TP2 rate = full winrate; Reaction = TP1 hoặc TP2; Weak = entry không đủ lực.</td>
+    </tr>`).join('') || '<tr><td colspan="10" class="muted">Chưa có Learning Summary hoặc lệnh đã đóng để thống kê.</td></tr>';
 }
 
 function pctChangeFrom(kl, candlesBack) {
@@ -1591,15 +1723,38 @@ function showTab(name) {
 
 $('scanBtn').onclick = scan;
 $('forwardBtn').onclick = forwardTestAll;
+async function runAutoScanCycle() {
+  if (runAutoScanCycle.busy) {
+    setStatus('Auto scan: vòng trước chưa xong, bỏ qua vòng này để tránh spam API.');
+    return;
+  }
+  runAutoScanCycle.busy = true;
+  try {
+    setStatus('Auto scan: bắt đầu Scan → Forward-test → Push local...');
+    await scan();
+    await forwardTestAll();
+    await autoCompactLearningAfterCycle();
+    await autoPushLocalAfterCycle();
+  } catch (e) {
+    setStatus('Auto scan cycle lỗi: ' + e.message);
+  } finally {
+    runAutoScanCycle.busy = false;
+  }
+}
+runAutoScanCycle.busy = false;
+
 $('autoBtn').onclick = () => {
   if (autoTimer) {
-    clearInterval(autoTimer); autoTimer = null;
+    clearInterval(autoTimer);
+    autoTimer = null;
+    runAutoScanCycle.busy = false;
     $('autoBtn').textContent = 'Bật auto scan';
     setStatus('Đã tắt auto scan.');
   } else {
-    scan();
-    autoTimer = setInterval(async () => { await scan(); await forwardTestAll(); }, +$('scanSec').value * 1000);
+    runAutoScanCycle();
+    autoTimer = setInterval(runAutoScanCycle, +$('scanSec').value * 1000);
     $('autoBtn').textContent = 'Tắt auto scan';
+    setStatus(`Đã bật auto scan: mỗi ${$('scanSec').value}s sẽ chạy Scan → Forward-test → Push local. Push local là bước cuối cùng.`);
   }
 };
 $('exportBtn').onclick = () => {
@@ -1709,6 +1864,8 @@ $('configPushBtn').onclick = pushConfigToSupabase;
 $('configPullBtn').onclick = pullConfigFromSupabase;
 $('newBatchBtn').onclick = createNewBatch;
 $('batchSummaryBtn').onclick = summarizeCurrentBatch;
+$('compactBtn').onclick = () => compactLearning({ pushCloud:false });
+$('clearSummaryBtn').onclick = clearLearningSummary;
 
 applyConfig(loadConfigLocal());
 if ($('batchName')) $('batchName').value = getCurrentBatch();
