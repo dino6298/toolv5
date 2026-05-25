@@ -189,6 +189,13 @@
     <aside class="card">
       <div class="controls">
         <div class="control-section-title">Scan cơ bản</div>
+        <label>Preset Scan theo khung
+          <select id="scanTfPreset">
+            <option value="5m">5m Scalping - lọc rất chặt</option>
+            <option value="15m" selected>15m Balanced - khuyến nghị</option>
+            <option value="1h">1h Swing intraday - ít nhiễu</option>
+          </select>
+        </label>
         <label>Khung nến đọc tín hiệu
           <select id="interval">
             <option value="5m">5m - scalp nhanh</option>
@@ -337,6 +344,10 @@
         <div class="row">
           <button id="compactBtn" class="secondary">Compact learning</button>
           <button id="clearSummaryBtn" class="danger">Xóa learning summary</button>
+        </div>
+        <div class="row">
+          <button id="summaryPushBtn" class="secondary">Push learning cloud</button>
+          <button id="summaryPullBtn" class="secondary">Pull learning cloud</button>
         </div>
         <button id="autoBtn" class="secondary">Bật auto scan</button>
         <div class="hint">Auto scan: Scan → Forward-test → Push local. Push local luôn là bước cuối cùng.</div>
@@ -506,6 +517,88 @@ function loadLearningSummary() {
 function saveLearningSummary(summary) {
   localStorage.setItem(LEARNING_SUMMARY_KEY, JSON.stringify(summary || {}));
 }
+function mergeLearningSummaries(a={}, b={}) {
+  const out = JSON.parse(JSON.stringify(a || {}));
+  for (const [key, row] of Object.entries(b || {})) {
+    if (!out[key]) out[key] = { total:0, tp2:0, tp1Only:0, loss:0, weak:0, expired:0, cancelled:0, updatedAt:null };
+    out[key].total += Number(row.total || 0);
+    out[key].tp2 += Number(row.tp2 || 0);
+    out[key].tp1Only += Number(row.tp1Only || row.tp1_only || 0);
+    out[key].loss += Number(row.loss || 0);
+    out[key].weak += Number(row.weak || 0);
+    out[key].expired += Number(row.expired || 0);
+    out[key].cancelled += Number(row.cancelled || 0);
+    out[key].updatedAt = row.updatedAt || row.updated_at || new Date().toISOString();
+  }
+  return out;
+}
+async function pushLearningSummaryToSupabase() {
+  if (!supabaseClient || !supabaseSession) {
+    setStatus('Chưa login Supabase nên không thể Push learning cloud.');
+    return;
+  }
+  const summary = loadLearningSummary();
+  const rows = Object.entries(summary).map(([bucket_key, r]) => ({
+    user_id: supabaseSession.user.id,
+    bucket_key,
+    total: Number(r.total || 0),
+    tp2: Number(r.tp2 || 0),
+    tp1_only: Number(r.tp1Only || 0),
+    loss: Number(r.loss || 0),
+    weak: Number(r.weak || 0),
+    expired: Number(r.expired || 0),
+    cancelled: Number(r.cancelled || 0),
+    updated_at: new Date().toISOString()
+  }));
+  if (!rows.length) return setStatus('Learning Summary local đang trống, không có gì để push.');
+  const { error } = await supabaseClient
+    .from('learning_summary')
+    .upsert(rows, { onConflict: 'user_id,bucket_key' });
+  if (error) {
+    setStatus('Push learning cloud lỗi: ' + error.message + ' | Cần tạo bảng learning_summary trong Supabase.');
+    throw error;
+  }
+  setStatus(`Đã push Learning Summary lên cloud: ${rows.length} buckets.`);
+}
+async function pullLearningSummaryFromSupabase() {
+  if (!supabaseClient || !supabaseSession) {
+    setStatus('Chưa login Supabase nên không thể Pull learning cloud.');
+    return;
+  }
+  const { data, error } = await supabaseClient
+    .from('learning_summary')
+    .select('*')
+    .eq('user_id', supabaseSession.user.id);
+  if (error) {
+    setStatus('Pull learning cloud lỗi: ' + error.message + ' | Cần tạo bảng learning_summary trong Supabase.');
+    throw error;
+  }
+  const cloudSummary = {};
+  for (const r of data || []) {
+    cloudSummary[r.bucket_key] = {
+      total: Number(r.total || 0),
+      tp2: Number(r.tp2 || 0),
+      tp1Only: Number(r.tp1_only || 0),
+      loss: Number(r.loss || 0),
+      weak: Number(r.weak || 0),
+      expired: Number(r.expired || 0),
+      cancelled: Number(r.cancelled || 0),
+      updatedAt: r.updated_at
+    };
+  }
+  const merged = mergeLearningSummaries(loadLearningSummary(), cloudSummary);
+  saveLearningSummary(merged);
+  renderStats();
+  setStatus(`Đã pull + merge Learning Summary từ cloud: ${Object.keys(cloudSummary).length} buckets.`);
+}
+async function clearLearningSummaryCloud() {
+  if (!supabaseClient || !supabaseSession) return setStatus('Chưa login Supabase nên không thể xóa Learning Summary cloud.');
+  const ok = confirm('Xóa toàn bộ Learning Summary trên cloud? Raw signals không bị xóa.');
+  if (!ok) return;
+  const { error } = await supabaseClient.from('learning_summary').delete().eq('user_id', supabaseSession.user.id);
+  if (error) return setStatus('Xóa Learning Summary cloud lỗi: ' + error.message);
+  setStatus('Đã xóa Learning Summary trên cloud.');
+}
 function learningBucketForSignal(s) {
   const rsBucket = (v) => {
     const n = Number(v || 0);
@@ -592,7 +685,7 @@ function setStatus(msg) {
 }
 
 function getConfigFields() {
-  return ['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','batchName','compactHours','maxClosedRaw','proxyUrl','supaUrl','supaKey','supaEmail'];
+  return ['scanTfPreset','interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','batchName','compactHours','maxClosedRaw','proxyUrl','supaUrl','supaKey','supaEmail'];
 }
 function collectConfig() {
   const cfg = {};
@@ -750,14 +843,15 @@ async function autoCompactLearningAfterCycle() {
 
 async function autoPushLocalAfterCycle() {
   if (!supabaseClient || !supabaseSession) {
-    setStatus('Auto scan xong. Chưa login Supabase nên bỏ qua bước Push local.');
+    setStatus('Auto scan xong. Chưa login Supabase nên bỏ qua bước Push local/cloud learning.');
     return;
   }
   try {
+    await pushLearningSummaryToSupabase();
     await pushToSupabase();
-    setStatus('Auto scan xong → Forward-test xong → Đã Push local lên cloud.');
+    setStatus('Auto scan xong → Forward-test/Compact xong → Đã Push Learning Summary + local log lên cloud.');
   } catch (e) {
-    setStatus('Auto scan xong nhưng Push local lỗi: ' + e.message);
+    setStatus('Auto scan xong nhưng Push cloud lỗi: ' + e.message);
   }
 }
 
@@ -1562,7 +1656,9 @@ function compactLearning({ pushCloud=false } = {}) {
   saveSignals(signals);
   renderLog(); renderStats(); updateMetrics(lastScanRows);
   setStatus(`Compact learning xong: compact ${compacted} signal, xóa raw ${removed} signal khỏi local. Learning Stats vẫn giữ dữ liệu đã học.`);
-  if (pushCloud && supabaseClient && supabaseSession) pushToSupabase();
+  if (pushCloud && supabaseClient && supabaseSession) {
+    pushLearningSummaryToSupabase().then(() => pushToSupabase()).catch(e => setStatus('Compact xong nhưng push cloud lỗi: ' + e.message));
+  }
   return { compacted, removed };
 }
 async function clearLearningSummary() {
@@ -1830,6 +1926,11 @@ $('tabLog').onclick = () => showTab('log');
 $('tabStats').onclick = () => showTab('stats');
 ['sideFilter','sortBy'].forEach(id => $(id).addEventListener('change', () => renderScan(lastScanRows)));
 $('qualityPreset').addEventListener('change', () => applyQualityPreset($('qualityPreset').value));
+$('scanTfPreset').addEventListener('change', () => applyScanTimeframePreset($('scanTfPreset').value));
+$('interval').addEventListener('change', () => {
+  if ($('scanTfPreset')) $('scanTfPreset').value = $('interval').value;
+  applyScanTimeframePreset($('interval').value);
+});
 $('quickSignalMode').addEventListener('change', () => {
   $('qSignalMode').value = $('quickSignalMode').value;
   saveConfigLocal();
@@ -1866,9 +1967,51 @@ $('newBatchBtn').onclick = createNewBatch;
 $('batchSummaryBtn').onclick = summarizeCurrentBatch;
 $('compactBtn').onclick = () => compactLearning({ pushCloud:false });
 $('clearSummaryBtn').onclick = clearLearningSummary;
+$('summaryPushBtn').onclick = pushLearningSummaryToSupabase;
+$('summaryPullBtn').onclick = pullLearningSummaryFromSupabase;
 
+const SCAN_TIMEFRAME_PRESETS = {
+  '5m': { interval:'5m', trackInterval:'1m', topN:15, scanSec:300, minVol:80000000, minScore:78, dupMin:90, expireHours:2, weakMin:45, weakMfePct:55, maxActiveSymbol:1, compactHours:24, maxClosedRaw:250 },
+  '15m': { interval:'15m', trackInterval:'1m', topN:20, scanSec:300, minVol:50000000, minScore:75, dupMin:180, expireHours:4, weakMin:90, weakMfePct:50, maxActiveSymbol:1, compactHours:24, maxClosedRaw:300 },
+  '1h': { interval:'1h', trackInterval:'5m', topN:30, scanSec:900, minVol:30000000, minScore:72, dupMin:480, expireHours:8, weakMin:180, weakMfePct:45, maxActiveSymbol:1, compactHours:48, maxClosedRaw:400 }
+};
+const QUALITY_PRESETS_BY_TF = {
+  '5m': {
+    SAFE: { qMinStable:72, qMinAdx:28, qMinRr:1.20, qMaxEmaDist:0.45, qMaxVwapDist:0.75, qMinEmaSpread:0.12, qLongRsi:'48-62', qShortRsi:'38-50', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
+    BALANCED: { qMinStable:68, qMinAdx:25, qMinRr:1.15, qMaxEmaDist:0.60, qMaxVwapDist:0.90, qMinEmaSpread:0.10, qLongRsi:'46-64', qShortRsi:'36-52', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
+    AGGRESSIVE: { qMinStable:64, qMinAdx:22, qMinRr:1.05, qMaxEmaDist:0.80, qMaxVwapDist:1.20, qMinEmaSpread:0.08, qLongRsi:'44-68', qShortRsi:'32-56', qBtcFilter:'MEDIUM', qSignalMode:'TREND_AND_BREAKOUT', qLearningFilter:'ON' }
+  },
+  '15m': {
+    SAFE: { qMinStable:68, qMinAdx:25, qMinRr:1.35, qMaxEmaDist:0.70, qMaxVwapDist:1.00, qMinEmaSpread:0.15, qLongRsi:'48-64', qShortRsi:'36-50', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
+    BALANCED: { qMinStable:65, qMinAdx:24, qMinRr:1.30, qMaxEmaDist:0.90, qMaxVwapDist:1.20, qMinEmaSpread:0.12, qLongRsi:'46-66', qShortRsi:'34-52', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
+    AGGRESSIVE: { qMinStable:60, qMinAdx:20, qMinRr:1.15, qMaxEmaDist:1.20, qMaxVwapDist:1.80, qMinEmaSpread:0.08, qLongRsi:'42-70', qShortRsi:'30-58', qBtcFilter:'MEDIUM', qSignalMode:'TREND_AND_BREAKOUT', qLearningFilter:'OFF' }
+  },
+  '1h': {
+    SAFE: { qMinStable:64, qMinAdx:22, qMinRr:1.50, qMaxEmaDist:1.20, qMaxVwapDist:1.80, qMinEmaSpread:0.20, qLongRsi:'45-66', qShortRsi:'34-55', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
+    BALANCED: { qMinStable:60, qMinAdx:20, qMinRr:1.40, qMaxEmaDist:1.60, qMaxVwapDist:2.20, qMinEmaSpread:0.15, qLongRsi:'43-68', qShortRsi:'32-57', qBtcFilter:'MEDIUM', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
+    AGGRESSIVE: { qMinStable:56, qMinAdx:18, qMinRr:1.25, qMaxEmaDist:2.20, qMaxVwapDist:3.00, qMinEmaSpread:0.10, qLongRsi:'40-72', qShortRsi:'28-60', qBtcFilter:'SOFT', qSignalMode:'TREND_AND_BREAKOUT', qLearningFilter:'OFF' }
+  }
+};
+const applyQualityPresetBase = typeof applyQualityPreset === 'function' ? applyQualityPreset : null;
+applyQualityPreset = function(name) {
+  const tf = $('interval')?.value || $('scanTfPreset')?.value || '15m';
+  const preset = (QUALITY_PRESETS_BY_TF[tf] && QUALITY_PRESETS_BY_TF[tf][name]) || (QUALITY_PRESETS_BY_TF['15m'] && QUALITY_PRESETS_BY_TF['15m'][name]);
+  if (!preset) return applyQualityPresetBase?.(name);
+  Object.entries(preset).forEach(([k,v]) => { if ($(k)) $(k).value = v; });
+  saveConfigLocal();
+  setStatus(`Đã áp Winrate Engine ${name} cho khung ${tf}: Stable ${preset.qMinStable}, ADX ${preset.qMinAdx}, RR ${preset.qMinRr}.`);
+};
+function applyScanTimeframePreset(tf) {
+  const p = SCAN_TIMEFRAME_PRESETS[tf || '15m'] || SCAN_TIMEFRAME_PRESETS['15m'];
+  Object.entries(p).forEach(([k,v]) => { if ($(k)) $(k).value = v; });
+  if ($('scanTfPreset')) $('scanTfPreset').value = p.interval;
+  applyQualityPreset($('qualityPreset')?.value || 'BALANCED');
+  saveConfigLocal();
+  setStatus(`Đã áp preset Scan ${p.interval}: top ${p.topN}, auto ${p.scanSec}s, volume ${fmt(p.minVol/1e6,0)}M, expire ${p.expireHours}h.`);
+}
 applyConfig(loadConfigLocal());
 if ($('batchName')) $('batchName').value = getCurrentBatch();
+if ($('scanTfPreset') && $('interval')) $('scanTfPreset').value = $('interval').value || '15m';
 if ($('quickSignalMode') && $('qSignalMode')) $('quickSignalMode').value = $('qSignalMode').value;
 initProxyFromSettings();
 initSupabaseFromSettings();
