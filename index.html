@@ -24,11 +24,51 @@
       background: radial-gradient(circle at top left, #102139 0, var(--bg) 35%);
       color: var(--text);
     }
-    .wrap { max-width: 1440px; margin: 0 auto; padding: 24px; }
-    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 18px; }
+    .wrap { width: min(100vw, 1920px); max-width: none; margin: 0 auto; padding: clamp(10px, 1.4vw, 24px); }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 12px; }
+    .sticky-control {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: grid;
+      grid-template-columns: minmax(260px, 1.2fr) repeat(4, minmax(150px, auto));
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: rgba(8, 11, 18, .92);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 16px 40px rgba(0,0,0,.28);
+    }
+    .sticky-status {
+      min-height: 44px;
+      display:flex;
+      align-items:center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: #0b1220;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      overflow: hidden;
+    }
+    .sticky-control button,
+    .sticky-control select {
+      min-height: 44px;
+    }
+    .control-section-title {
+      margin: 8px 0 2px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
     h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.04em; }
     .sub { color: var(--muted); font-size: 14px; line-height: 1.5; max-width: 950px; }
-    .grid { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
+    .grid { display: grid; grid-template-columns: clamp(300px, 22vw, 380px) minmax(0, 1fr); gap: clamp(10px, 1vw, 16px); }
     .card { background: rgba(16,24,39,.92); border: 1px solid var(--border); border-radius: 18px; padding: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.28); }
     .controls { display: grid; gap: 12px; }
     label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
@@ -59,7 +99,7 @@
     .bad { color: var(--red); }
     .warn { color: var(--yellow); }
     .muted { color: var(--muted); }
-    .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 12px; }
+    .cards { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: clamp(8px, .8vw, 12px); margin-bottom: 12px; }
     .mini { background: #0b1220; border: 1px solid var(--border); border-radius: 16px; padding: 12px; color: var(--muted); }
     .mini b { display:block; font-size: 20px; margin-top: 4px; color: var(--text); }
     .detail { min-width: 240px; line-height: 1.45; }
@@ -75,7 +115,10 @@
     .scan-panel-head h3 { margin: 0; font-size: 15px; }
     .mini-count { display:inline-flex; min-width: 34px; justify-content:center; padding: 4px 10px; border-radius: 999px; background:#0b1220; color: var(--text); font-weight: 900; font-size: 12px; }
     .empty { padding: 18px; color: var(--muted); font-size: 13px; }
-    @media (min-width: 1280px) { .scan-split { grid-template-columns: 1.08fr .92fr; } }
+    .blocked-reason { margin-top: 8px; padding: 8px 10px; border-radius: 12px; background: rgba(255,92,122,.12); border: 1px solid rgba(255,92,122,.3); color: #ff8fa3; font-size: 12px; line-height: 1.45; }
+    .blocked-reason b { color: #ffb3c1; }
+    @media (min-width: 1280px) { .scan-split { grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr); } }
+    @media (min-width: 1700px) { .scan-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
     .hidden { display:none; }
     .smallbtn { width:auto; padding: 6px 9px; border-radius: 10px; font-size: 12px; }
     .id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); word-break: break-all; }
@@ -83,7 +126,29 @@
     .symbol-link:hover { color: var(--blue); text-decoration: underline; }
     .signal-link { color: var(--muted); text-decoration: none; }
     .signal-link:hover { color: var(--blue); text-decoration: underline; }
-    @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .cards { grid-template-columns: 1fr 1fr; } .wrap { padding: 14px; } table { min-width: 1180px; } .tablebox { overflow:auto; } header { flex-direction: column; } }
+    @media (max-width: 1100px) {
+      .sticky-control { grid-template-columns: 1fr 1fr; top: 0; }
+      .sticky-status { grid-column: 1 / -1; }
+      .grid { grid-template-columns: 1fr; }
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .wrap { width: 100vw; padding: 12px; }
+      table { min-width: 1180px; }
+      .tablebox, .scan-panel { overflow-x:auto; }
+      header { flex-direction: column; }
+    }
+    @media (min-width: 1600px) {
+      .wrap { width: min(98vw, 2200px); }
+      table { font-size: 14px; }
+      th, td { padding: 11px 10px; }
+    }
+    @media (max-width: 640px) {
+      .sticky-control { grid-template-columns: 1fr; border-radius: 14px; }
+      .cards { grid-template-columns: 1fr; }
+      .row { grid-template-columns: 1fr; }
+      h1 { font-size: 22px; }
+      .sub { font-size: 13px; }
+      .mini b { font-size: 18px; }
+    }
   </style>
 </head>
 <body>
@@ -93,12 +158,24 @@
       <h1>Binance Futures Indicator Scanner Bot v4.2</h1>
       <div class="sub">Bot nghiên cứu tín hiệu: lọc symbol USDT Perpetual có thanh khoản + nến ổn định, đọc EMA/RSI/MACD/ADX/VWAP/ATR/Volume, tạo Signal ID cố định, chống duplicate, forward-test Entry/TP/SL, đồng bộ log/config qua Supabase, gọi Binance qua Cloudflare Worker proxy và thêm Winrate Engine để chặn tín hiệu yếu. Không tự đặt lệnh.</div>
     </div>
-    <button id="scanBtn">Quét & tạo tín hiệu</button>
   </header>
+
+  <div class="sticky-control">
+    <div class="sticky-status" id="stickyStatus">Sẵn sàng.</div>
+    <button id="scanBtn">Quét & tạo tín hiệu</button>
+    <select id="quickSignalMode" title="Signal mode nhanh">
+      <option value="TREND_PULLBACK">Trend Pullback</option>
+      <option value="TREND_AND_BREAKOUT">Trend + Breakout</option>
+      <option value="ALL">All</option>
+    </select>
+    <button id="forwardBtn" class="secondary">Forward-test log</button>
+    <button id="supaPushBtn" class="secondary">Push local</button>
+  </div>
 
   <div class="grid">
     <aside class="card">
       <div class="controls">
+        <div class="control-section-title">Scan cơ bản</div>
         <label>Khung nến đọc tín hiệu
           <select id="interval">
             <option value="5m">5m - scalp nhanh</option>
@@ -155,6 +232,7 @@
           </label>
         </div>
         <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+        <div class="control-section-title">Winrate Engine</div>
         <label>Preset chất lượng tín hiệu
           <select id="qualityPreset">
             <option value="SAFE" selected>Safe - ít tín hiệu, lọc chặt</option>
@@ -213,12 +291,12 @@
           </select>
         </label>
         <button id="autoBtn" class="secondary">Bật auto scan</button>
-        <button id="forwardBtn" class="secondary">Forward-test log</button>
         <button id="exportBtn" class="secondary">Export log JSON</button>
         <button id="importBtn" class="secondary">Import log JSON</button>
         <input id="importFile" type="file" accept="application/json,.json" style="display:none" />
         <button id="clearBtn" class="danger">Xóa log local</button>
         <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+        <div class="control-section-title">Kết nối dữ liệu</div>
         <label>Binance Proxy URL - Cloudflare Worker
           <input id="proxyUrl" type="text" autocomplete="url" placeholder="https://binance-proxy.xxx.workers.dev" />
         </label>
@@ -227,6 +305,7 @@
           <button id="proxyTestBtn" class="secondary">Test proxy</button>
         </div>
         <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+        <div class="control-section-title">Supabase Sync</div>
         <label>Supabase Project URL
           <input id="supaUrl" type="text" autocomplete="url" placeholder="https://xxxx.supabase.co" />
         </label>
@@ -245,7 +324,7 @@
         </div>
         <div class="row">
           <button id="supaPullBtn" class="secondary">Pull cloud</button>
-          <button id="supaPushBtn" class="secondary">Push local</button>
+          <button id="supaPushBtnSide" class="secondary">Push local</button>
         </div>
         <button id="supaLogoutBtn" class="secondary">Logout Supabase</button>
         <div class="row">
@@ -384,7 +463,10 @@ function saveSignals(list) {
   localStorage.setItem(STORE_KEY, JSON.stringify(list));
   syncToSupabaseIfReady(list);
 }
-function setStatus(msg) { $('status').textContent = msg; }
+function setStatus(msg) {
+  if ($('status')) $('status').textContent = msg;
+  if ($('stickyStatus')) $('stickyStatus').textContent = msg;
+}
 
 function getConfigFields() {
   return ['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','proxyUrl','supaUrl','supaKey','supaEmail'];
@@ -1167,7 +1249,7 @@ function renderScanRow(r) {
     <td>Giá: <b>${fmt(r.price,6)}</b><br>Entry nghiên cứu: <b>${fmt(r.entry,6)}</b></td>
     <td>${r.side === 'WAIT' ? '<span class="muted">Chưa đủ điều kiện</span>' : `SL: <b>${fmt(r.sl,6)}</b><br>TP1: <b>${fmt(r.tp1,6)}</b><br>TP2: <b>${fmt(r.tp2,6)}</b><br>RR: <b>${fmt(r.rr,2)}</b>`}</td>
     <td><span class="pill">RSI ${fmt(r.rsi,1)}</span><span class="pill">ADX ${fmt(r.adx,1)}</span><span class="pill">EMA20 ${fmt(r.ema20,6)}</span><span class="pill">EMA50 ${fmt(r.ema50,6)}</span><span class="pill">VWAP ${fmt(r.vwap,6)}</span></td>
-    <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}${r.learningWarning ? '<br><span class="warn">Learning: ' + r.learningWarning + '</span>' : ''}${r.qualityBlocked ? '<br><span class="bad">Gate chặn: ' + r.qualityBlocked.join(' · ') + '</span>' : ''}</td>
+    <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}${r.learningWarning ? '<br><span class="warn">Learning: ' + r.learningWarning + '</span>' : ''}${r.qualityBlocked ? '<div class="blocked-reason"><b>Blocked reason:</b><br>• ' + r.qualityBlocked.join('<br>• ') + '</div>' : ''}</td>
   </tr>`;
 }
 
@@ -1331,6 +1413,14 @@ $('tabLog').onclick = () => showTab('log');
 $('tabStats').onclick = () => showTab('stats');
 ['sideFilter','sortBy'].forEach(id => $(id).addEventListener('change', () => renderScan(lastScanRows)));
 $('qualityPreset').addEventListener('change', () => applyQualityPreset($('qualityPreset').value));
+$('quickSignalMode').addEventListener('change', () => {
+  $('qSignalMode').value = $('quickSignalMode').value;
+  saveConfigLocal();
+  setStatus(`Đã đổi Signal mode: ${$('quickSignalMode').value}`);
+});
+$('qSignalMode').addEventListener('change', () => {
+  $('quickSignalMode').value = $('qSignalMode').value;
+});
 ['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode'].forEach(id => {
   const el = $(id);
   if (el) el.addEventListener('change', () => saveConfigLocal());
@@ -1352,10 +1442,12 @@ $('supaLoginBtn').onclick = signInSupabase;
 $('supaLogoutBtn').onclick = signOutSupabase;
 $('supaPullBtn').onclick = pullFromSupabase;
 $('supaPushBtn').onclick = pushToSupabase;
+$('supaPushBtnSide').onclick = pushToSupabase;
 $('configPushBtn').onclick = pushConfigToSupabase;
 $('configPullBtn').onclick = pullConfigFromSupabase;
 
 applyConfig(loadConfigLocal());
+if ($('quickSignalMode') && $('qSignalMode')) $('quickSignalMode').value = $('qSignalMode').value;
 initProxyFromSettings();
 initSupabaseFromSettings();
 renderLog();
