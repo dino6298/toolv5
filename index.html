@@ -47,8 +47,10 @@
     .long { color: #04140d; background: var(--green); }
     .short { color: #21050b; background: var(--red); }
     .wait { color: #241b00; background: var(--yellow); }
+    .blocked { color: #ffffff; background: #7a3145; }
     .open { color: #06142a; background: var(--blue); }
     .win { color: #04140d; background: var(--green); }
+    .tp1 { color: #071423; background: #7dd3fc; }
     .loss { color: #21050b; background: var(--red); }
     .expired { color: #241b00; background: #b8bcc8; }
     .pill { display: inline-flex; padding: 3px 7px; border-radius: 999px; background: #0b1220; color: var(--muted); margin: 2px 3px 2px 0; white-space: nowrap; }
@@ -251,7 +253,7 @@
         <div class="mini">Đã quét<b id="mScanned">0</b></div>
         <div class="mini">Tín hiệu mới<b id="mNew">0</b></div>
         <div class="mini">Đang theo dõi<b id="mOpen">0</b></div>
-        <div class="mini">Win / Loss<b id="mWL">0 / 0</b></div>
+        <div class="mini">TP2 / TP1 / Loss<b id="mWL">0 / 0 / 0</b></div>
         <div class="mini">LONG / SHORT<b id="mSide">0 / 0</b></div>
         <div class="mini">Cập nhật<b id="mTime">-</b></div>
       </div>
@@ -302,10 +304,11 @@
           <tr>
             <th>Nhóm</th>
             <th>Tổng</th>
-            <th>Win</th>
+            <th>TP2</th>
+            <th>TP1 only</th>
             <th>Loss</th>
-            <th>Winrate</th>
-            <th>TP1 trước SL</th>
+            <th>TP2 rate</th>
+            <th>TP1 reach</th>
             <th>Ghi chú</th>
           </tr>
           </thead>
@@ -524,7 +527,15 @@ async function pushToSupabase() {
 async function getJSON(path) {
   const base = getApiBase();
   const r = await fetch(base + path, { method: 'GET' });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${base}${path}`);
+  if (!r.ok) {
+    const retryAfter = r.headers.get('Retry-After') || r.headers.get('retry-after') || '';
+    let body = '';
+    try { body = await r.text(); } catch {}
+    if (r.status === 418 || r.status === 429) {
+      throw new Error(`BINANCE_RATE_LIMIT_${r.status}: Proxy/IP đang bị Binance rate-limit hoặc auto-ban. ${retryAfter ? 'Retry-After: ' + retryAfter + '. ' : ''}${base}${path} ${body.slice(0,160)}`);
+    }
+    throw new Error(`${r.status} ${r.statusText}: ${base}${path} ${body.slice(0,160)}`);
+  }
   return r.json();
 }
 async function testProxy() {
@@ -632,21 +643,31 @@ function parseKlines(rows) {
     time:r[0], open:+r[1], high:+r[2], low:+r[3], close:+r[4], volume:+r[5], closeTime:r[6]
   }));
 }
+function makePlanKey(r) {
+  const entryKey = Math.round((r.entry || 0) * 1e8);
+  const slKey = Math.round((r.sl || 0) * 1e8);
+  const tp2Key = Math.round((r.tp2 || 0) * 1e8);
+  return `E${entryKey}_SL${slKey}_TP2${tp2Key}`;
+}
 function makeSignalId(r, interval, signalTime) {
   const bucket = Math.floor(signalTime / 60000);
-  return `${r.symbol}_${interval}_${r.side}_${bucket}`;
+  return `${r.symbol}_${interval}_${r.side}_${bucket}_${makePlanKey(r)}`;
 }
 function parseRange(text, fallbackMin, fallbackMax) {
   const parts = String(text || '').split('-').map(x => Number(String(x).trim()));
   if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return [fallbackMin, fallbackMax];
   return [parts[0], parts[1]];
 }
+function isFullWinStatus(status) { return ['TP2_WIN','WIN'].includes(status); }
+function isTp1OnlyStatus(status) { return ['TP1_ONLY'].includes(status); }
+function isLossStatus(status) { return status === 'LOSS'; }
+function isClosedResultStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN'].includes(status); }
 function recentStatsForGate(r) {
-  const closed = loadSignals().filter(s => ['WIN','LOSS'].includes(s.status));
+  const closed = loadSignals().filter(s => isClosedResultStatus(s.status));
   const sameSymbol = closed.filter(s => s.symbol === r.symbol).slice(0, 8);
   const sameSide = closed.filter(s => s.side === r.side).slice(0, 20);
-  const wr = arr => arr.length ? arr.filter(s => s.status === 'WIN').length / arr.length * 100 : 100;
-  return { symbolN: sameSymbol.length, symbolWr: wr(sameSymbol), sideN: sameSide.length, sideWr: wr(sameSide) };
+  const qualityRate = arr => arr.length ? arr.filter(s => isFullWinStatus(s.status) || isTp1OnlyStatus(s.status)).length / arr.length * 100 : 100;
+  return { symbolN: sameSymbol.length, symbolWr: qualityRate(sameSymbol), sideN: sameSide.length, sideWr: qualityRate(sameSide) };
 }
 function qualityGate(r) {
   const minStable = +$('qMinStable').value;
@@ -700,13 +721,21 @@ function qualityGate(r) {
 }
 function isDuplicateSignal(existing, candidate) {
   const dupWindow = +$('dupMin').value * 60 * 1000;
-  const nearEntryPct = Math.abs(existing.entry - candidate.entry) / candidate.entry * 100;
-  return existing.symbol === candidate.symbol &&
-    existing.interval === candidate.interval &&
-    existing.side === candidate.side &&
-    Math.abs(existing.signalTime - candidate.signalTime) <= dupWindow &&
-    nearEntryPct <= 0.55 &&
-    !['WIN','LOSS','EXPIRED','CANCELLED'].includes(existing.status);
+  const closedStatuses = ['TP2_WIN','TP1_ONLY','WIN','LOSS','EXPIRED','CANCELLED'];
+  if (closedStatuses.includes(existing.status)) return false;
+  if (existing.symbol !== candidate.symbol) return false;
+  if (existing.interval !== candidate.interval) return false;
+  if (existing.side !== candidate.side) return false;
+  if (Math.abs(existing.signalTime - candidate.signalTime) > dupWindow) return false;
+
+  // Chỉ xem là trùng khi cùng một kế hoạch giao dịch gần như giống hệt.
+  // Nếu entry/SL/TP đã thay đổi đáng kể, lưu thành signal mới để forward-test riêng.
+  const entryDiff = Math.abs(existing.entry - candidate.entry) / Math.max(candidate.entry, 1e-12) * 100;
+  const slDiff = Math.abs(existing.sl - candidate.sl) / Math.max(candidate.sl, 1e-12) * 100;
+  const tp2Diff = Math.abs(existing.tp2 - candidate.tp2) / Math.max(candidate.tp2, 1e-12) * 100;
+  const samePlanKey = existing.planKey && candidate.planKey && existing.planKey === candidate.planKey;
+  const almostSamePlan = entryDiff <= 0.08 && slDiff <= 0.12 && tp2Diff <= 0.12;
+  return samePlanKey || almostSamePlan;
 }
 
 async function getBtcTrend(interval) {
@@ -841,6 +870,7 @@ function createSignalsFromScan(rows) {
       tp1: r.tp1,
       tp2: r.tp2,
       rr: r.rr,
+      planKey: makePlanKey(r),
       rsi: r.rsi,
       adx: r.adx,
       vwap: r.vwap,
@@ -895,7 +925,7 @@ async function scan() {
     for (let i=0;i<baseList.length;i++) {
       setStatus(`Đang đọc chỉ báo ${i+1}/${baseList.length}: ${baseList[i].symbol}`);
       try { results.push(await scanSymbol(baseList[i], interval)); } catch(e) { console.warn(e); }
-      await sleep(90);
+      await sleep(220);
     }
     lastScanRows = results;
     const newCount = createSignalsFromScan(results);
@@ -904,7 +934,16 @@ async function scan() {
     renderStats();
     setStatus(`Hoàn tất. Đã quét ${results.length} symbol, tạo ${newCount} tín hiệu mới. BTC: ${lastBtcTrend.note}. Winrate Engine đã chặn tín hiệu yếu.`);
   } catch (e) {
-    setStatus('Lỗi lấy dữ liệu: ' + e.message + '. Nếu bị Failed to fetch/CORS, hãy chạy qua Cloudflare Worker proxy.');
+    if (String(e.message).includes('BINANCE_RATE_LIMIT_')) {
+      if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+        $('autoBtn').textContent = 'Bật auto scan';
+      }
+      setStatus('Đã dừng auto scan để tránh ban lâu hơn. ' + e.message + ' | Hãy chờ hết ban rồi giảm Top symbol/giãn chu kỳ scan.');
+    } else {
+      setStatus('Lỗi lấy dữ liệu: ' + e.message + '. Nếu bị Failed to fetch/CORS, hãy chạy qua Cloudflare Worker proxy.');
+    }
   } finally { btn.disabled = false; }
 }
 
@@ -946,7 +985,11 @@ async function forwardTestOne(s) {
     const hitTP1 = s.side === 'LONG' ? k.high >= s.tp1 : k.low <= s.tp1;
     const hitTP2 = s.side === 'LONG' ? k.high >= s.tp2 : k.low <= s.tp2;
 
-    if (hitTP1 && !s.tp1HitTime) s.tp1HitTime = k.time;
+    if (hitTP1 && !s.tp1HitTime) {
+      s.tp1HitTime = k.time;
+      s.status = 'TP1_HIT';
+      s.result = 'TP1_HIT_TRACKING_TP2_OR_SL';
+    }
 
     // Nếu cùng 1 cây nến vừa chạm SL vừa chạm TP, chọn quy tắc bảo thủ: SL trước nếu chưa có TP1 trước đó.
     if (hitSL && !s.tp1HitTime) {
@@ -957,17 +1000,17 @@ async function forwardTestOne(s) {
       break;
     }
     if (hitTP2) {
-      s.status = 'WIN';
+      s.status = 'TP2_WIN';
       s.tp2HitTime = k.time;
       s.closeTime = k.time;
-      s.result = 'TP2_HIT';
+      s.result = 'TP2_HIT_FULL_WIN';
       break;
     }
     if (hitSL) {
-      s.status = s.tp1HitTime ? 'WIN' : 'LOSS';
+      s.status = s.tp1HitTime ? 'TP1_ONLY' : 'LOSS';
       s.slHitTime = k.time;
       s.closeTime = k.time;
-      s.result = s.tp1HitTime ? 'TP1_THEN_SL' : 'SL_HIT';
+      s.result = s.tp1HitTime ? 'TP1_THEN_SL_NOT_FULL_WIN' : 'SL_HIT';
       break;
     }
   }
@@ -981,7 +1024,7 @@ async function forwardTestAll() {
   const btn = $('forwardBtn');
   btn.disabled = true;
   let signals = loadSignals();
-  const active = signals.filter(s => ['NEW','OPEN'].includes(s.status));
+  const active = signals.filter(s => ['NEW','OPEN','TP1_HIT'].includes(s.status));
   try {
     for (let i=0;i<active.length;i++) {
       setStatus(`Forward-test ${i+1}/${active.length}: ${active[i].symbol} ${active[i].side}`);
@@ -990,11 +1033,20 @@ async function forwardTestAll() {
       saveSignals(signals);
       renderLog();
       renderStats();
-      await sleep(120);
+      await sleep(260);
     }
     setStatus(`Forward-test xong ${active.length} tín hiệu đang mở/chờ entry.`);
   } catch(e) {
-    setStatus('Lỗi forward-test: ' + e.message);
+    if (String(e.message).includes('BINANCE_RATE_LIMIT_')) {
+      if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+        $('autoBtn').textContent = 'Bật auto scan';
+      }
+      setStatus('Đã dừng auto scan/forward-test vì Binance rate-limit hoặc 418 ban: ' + e.message);
+    } else {
+      setStatus('Lỗi forward-test: ' + e.message);
+    }
   } finally {
     btn.disabled = false;
     updateMetrics(lastScanRows);
@@ -1013,11 +1065,13 @@ function renderScan(rows) {
     return b.score - a.score;
   });
   $('tbody').innerHTML = data.map(r => {
-    const cls = r.side === 'LONG' ? 'long' : r.side === 'SHORT' ? 'short' : 'wait';
-    const scoreCls = r.score >= minScore ? 'good' : r.score >= 55 ? 'warn' : 'bad';
+    const isBlocked = Boolean(r.qualityBlocked && r.qualityBlocked.length);
+    const displaySide = isBlocked ? 'BLOCKED' : r.side;
+    const cls = isBlocked ? 'blocked' : r.side === 'LONG' ? 'long' : r.side === 'SHORT' ? 'short' : 'wait';
+    const scoreCls = isBlocked ? 'warn' : r.score >= minScore ? 'good' : r.score >= 55 ? 'warn' : 'bad';
     return `<tr>
       <td><a class="symbol-link" href="${binanceFuturesUrl(r.symbol)}" target="_blank" rel="noopener noreferrer">${r.symbol}</a><br><span class="muted">Vol ${fmt(r.quoteVolume/1e6,1)}M · 24h ${fmt(r.change,2)}%</span></td>
-      <td><span class="tag ${cls}">${r.side}</span></td>
+      <td><span class="tag ${cls}">${displaySide}</span></td>
       <td><span class="score ${scoreCls}">${r.score}</span><br><span class="muted">Stable ${r.stability}/100</span></td>
       <td>Giá: <b>${fmt(r.price,6)}</b><br>Entry nghiên cứu: <b>${fmt(r.entry,6)}</b></td>
       <td>${r.side === 'WAIT' ? '<span class="muted">Chưa đủ điều kiện</span>' : `SL: <b>${fmt(r.sl,6)}</b><br>TP1: <b>${fmt(r.tp1,6)}</b><br>TP2: <b>${fmt(r.tp2,6)}</b><br>RR: <b>${fmt(r.rr,2)}</b>`}</td>
@@ -1029,7 +1083,8 @@ function renderScan(rows) {
 }
 
 function statusClass(st) {
-  if (st === 'WIN') return 'win';
+  if (st === 'TP2_WIN' || st === 'WIN') return 'win';
+  if (st === 'TP1_HIT' || st === 'TP1_ONLY') return 'tp1';
   if (st === 'LOSS') return 'loss';
   if (st === 'EXPIRED' || st === 'CANCELLED') return 'expired';
   if (st === 'OPEN') return 'open';
@@ -1060,7 +1115,7 @@ function cancelSignal(id) {
 }
 
 function renderStats() {
-  const done = loadSignals().filter(s => ['WIN','LOSS'].includes(s.status));
+  const done = loadSignals().filter(s => isClosedResultStatus(s.status));
   const groups = new Map();
   for (const s of done) {
     const keys = [`SYMBOL ${s.symbol}`, `SIDE ${s.side}`, `TF ${s.interval}`, `SCORE ${Math.floor(s.score/10)*10}+`];
@@ -1070,35 +1125,38 @@ function renderStats() {
     }
   }
   const rows = Array.from(groups.entries()).map(([k, arr]) => {
-    const win = arr.filter(s=>s.status==='WIN').length;
-    const loss = arr.filter(s=>s.status==='LOSS').length;
-    const tp1 = arr.filter(s=>s.tp1HitTime).length;
-    const wr = arr.length ? win/arr.length*100 : 0;
-    return { k, total: arr.length, win, loss, tp1, wr };
-  }).sort((a,b)=>b.total-a.total || b.wr-a.wr).slice(0,80);
+    const tp2 = arr.filter(s=>isFullWinStatus(s.status)).length;
+    const tp1Only = arr.filter(s=>isTp1OnlyStatus(s.status)).length;
+    const loss = arr.filter(s=>isLossStatus(s.status)).length;
+    const tp1Reach = arr.filter(s=>s.tp1HitTime).length;
+    const tp2Rate = arr.length ? tp2/arr.length*100 : 0;
+    return { k, total: arr.length, tp2, tp1Only, loss, tp1Reach, tp2Rate };
+  }).sort((a,b)=>b.total-a.total || b.tp2Rate-a.tp2Rate).slice(0,80);
 
   $('statsBody').innerHTML = rows.map(r => `
     <tr>
       <td><b>${r.k}</b></td>
       <td>${r.total}</td>
-      <td class="good">${r.win}</td>
+      <td class="good">${r.tp2}</td>
+      <td class="warn">${r.tp1Only}</td>
       <td class="bad">${r.loss}</td>
-      <td><b>${fmt(r.wr,1)}%</b></td>
-      <td>${fmt(r.tp1 / Math.max(1,r.total) * 100,1)}%</td>
-      <td class="muted">Cần tối thiểu 30+ mẫu để đáng tin hơn.</td>
-    </tr>`).join('') || '<tr><td colspan="7" class="muted">Chưa có lệnh WIN/LOSS để thống kê.</td></tr>';
+      <td><b>${fmt(r.tp2Rate,1)}%</b></td>
+      <td>${fmt(r.tp1Reach / Math.max(1,r.total) * 100,1)}%</td>
+      <td class="muted">TP1 only không tính là win; dùng để tối ưu TP1/TP2/R:R.</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">Chưa có lệnh TP2/TP1/Loss để thống kê.</td></tr>';
 }
 
 function updateMetrics(rows=[]) {
   const signals = loadSignals();
   const newSig = signals.filter(s=>s.status==='NEW').length;
   const open = signals.filter(s=>['NEW','OPEN'].includes(s.status)).length;
-  const win = signals.filter(s=>s.status==='WIN').length;
-  const loss = signals.filter(s=>s.status==='LOSS').length;
+  const tp2 = signals.filter(s=>isFullWinStatus(s.status)).length;
+  const tp1Only = signals.filter(s=>isTp1OnlyStatus(s.status)).length;
+  const loss = signals.filter(s=>isLossStatus(s.status)).length;
   $('mScanned').textContent = rows.length || lastScanRows.length || 0;
   $('mNew').textContent = newSig;
   $('mOpen').textContent = open;
-  $('mWL').textContent = `${win} / ${loss}`;
+  $('mWL').textContent = `${tp2} / ${tp1Only} / ${loss}`;
   $('mSide').textContent = `${signals.filter(r=>r.side==='LONG').length} / ${signals.filter(r=>r.side==='SHORT').length}`;
   $('mTime').textContent = new Date().toLocaleTimeString('vi-VN');
 }
