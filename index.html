@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Binance Futures Indicator Scanner Bot v4 Supabase + Binance Proxy</title>
+  <title>Binance Futures Indicator Scanner Bot v4.2 Cloud Config + Winrate Engine</title>
   <style>
     :root {
       --bg: #080b12;
@@ -79,8 +79,8 @@
 <div class="wrap">
   <header>
     <div>
-      <h1>Binance Futures Indicator Scanner Bot v4</h1>
-      <div class="sub">Bot nghiên cứu tín hiệu: lọc symbol USDT Perpetual có thanh khoản + nến ổn định, đọc EMA/RSI/MACD/ADX/VWAP/ATR/Volume, tạo Signal ID cố định, chống duplicate, forward-test Entry/TP/SL, đồng bộ log qua Supabase và gọi Binance qua Cloudflare Worker proxy. Không tự đặt lệnh.</div>
+      <h1>Binance Futures Indicator Scanner Bot v4.2</h1>
+      <div class="sub">Bot nghiên cứu tín hiệu: lọc symbol USDT Perpetual có thanh khoản + nến ổn định, đọc EMA/RSI/MACD/ADX/VWAP/ATR/Volume, tạo Signal ID cố định, chống duplicate, forward-test Entry/TP/SL, đồng bộ log/config qua Supabase, gọi Binance qua Cloudflare Worker proxy và thêm Winrate Engine để chặn tín hiệu yếu. Không tự đặt lệnh.</div>
     </div>
     <button id="scanBtn">Quét & tạo tín hiệu</button>
   </header>
@@ -143,6 +143,64 @@
             </select>
           </label>
         </div>
+        <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+        <label>Preset chất lượng tín hiệu
+          <select id="qualityPreset">
+            <option value="SAFE" selected>Safe - ít tín hiệu, lọc chặt</option>
+            <option value="BALANCED">Balanced - dùng hằng ngày</option>
+            <option value="AGGRESSIVE">Aggressive - chỉ forward-test</option>
+          </select>
+        </label>
+        <div class="row">
+          <label>Quality: Min Stability
+            <input id="qMinStable" type="number" min="40" max="95" value="70" />
+          </label>
+          <label>Quality: Min ADX
+            <input id="qMinAdx" type="number" min="10" max="50" value="25" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Quality: Min RR
+            <input id="qMinRr" type="number" min="1" max="5" step="0.1" value="1.4" />
+          </label>
+          <label>Max xa EMA20 %
+            <input id="qMaxEmaDist" type="number" min="0.2" max="5" step="0.1" value="0.8" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Max xa VWAP %
+            <input id="qMaxVwapDist" type="number" min="0.5" max="6" step="0.1" value="1.2" />
+          </label>
+          <label>Learning Filter
+            <select id="qLearningFilter">
+              <option value="ON" selected>Bật - né nhóm đang thua</option>
+              <option value="OFF">Tắt</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label>LONG RSI range
+            <input id="qLongRsi" type="text" value="45-68" />
+          </label>
+          <label>SHORT RSI range
+            <input id="qShortRsi" type="text" value="32-55" />
+          </label>
+        </div>
+        <label>BTC trend filter
+          <select id="qBtcFilter">
+            <option value="STRICT" selected>Strict - LONG cần BTC bull, SHORT cần BTC bear</option>
+            <option value="MEDIUM">Medium - không trade ngược BTC mạnh</option>
+            <option value="SOFT">Soft - chỉ trừ điểm nếu ngược BTC</option>
+            <option value="OFF">Tắt</option>
+          </select>
+        </label>
+        <label>Signal mode
+          <select id="qSignalMode">
+            <option value="TREND_PULLBACK" selected>Trend Pullback only</option>
+            <option value="TREND_AND_BREAKOUT">Trend Pullback + Breakout</option>
+            <option value="ALL">All - chỉ forward-test</option>
+          </select>
+        </label>
         <button id="autoBtn" class="secondary">Bật auto scan</button>
         <button id="forwardBtn" class="secondary">Forward-test log</button>
         <button id="exportBtn" class="secondary">Export log JSON</button>
@@ -177,10 +235,14 @@
           <button id="supaPushBtn" class="secondary">Push local</button>
         </div>
         <button id="supaLogoutBtn" class="secondary">Logout Supabase</button>
+        <div class="row">
+          <button id="configPushBtn" class="secondary">Push setting cloud</button>
+          <button id="configPullBtn" class="secondary">Pull setting cloud</button>
+        </div>
       </div>
       <div class="status" id="status">Sẵn sàng. Bấm “Quét & tạo tín hiệu” để lấy dữ liệu public từ Binance Futures.</div>
       <div class="note">
-        V4 dùng Cloudflare Worker proxy để gọi Binance ổn định hơn, localStorage làm cache dự phòng và Supabase làm cloud sync. Tool lưu Proxy URL, Supabase URL/key và email; password không lưu trong code/localStorage. Sau khi login, Supabase session sẽ tự giữ trên trình duyệt.
+        V4.2 dùng Cloudflare Worker proxy, localStorage làm cache dự phòng, Supabase sync signals/config và Winrate Engine để giảm tín hiệu yếu. Password không lưu trong code/localStorage.
       </div>
     </aside>
 
@@ -260,10 +322,10 @@ const DIRECT_BINANCE_API = "https://fapi.binance.com";
 
 // Có thể điền sẵn các giá trị mặc định tại đây trước khi deploy riêng cho bạn.
 // Không nên điền password vào code HTML.
-const DEFAULT_BINANCE_PROXY_URL = "https://white-smoke-3054.thongbgglog.workers.dev/";
-const DEFAULT_SUPABASE_URL = "https://mycbxawfbttmwdbnwncn.supabase.co";
-const DEFAULT_SUPABASE_KEY = "sb_publishable_j2EGJJ9pbYTMwUQF624HGQ_gShP_K7w";
-const DEFAULT_SUPABASE_EMAIL = "thongbgglog@gmail.com";
+const DEFAULT_BINANCE_PROXY_URL = "";
+const DEFAULT_SUPABASE_URL = "";
+const DEFAULT_SUPABASE_KEY = "";
+const DEFAULT_SUPABASE_EMAIL = "";
 
 const PROXY_URL_KEY = "fta_binance_proxy_url";
 const STORE_KEY = "fta_indicator_scanner_v4_signals";
@@ -275,6 +337,8 @@ let lastScanRows = [];
 let supabaseClient = null;
 let supabaseSession = null;
 let cloudSyncBusy = false;
+let lastBtcTrend = { mode: 'UNKNOWN', longOk: true, shortOk: true, note: 'BTC filter chưa chạy' };
+const CONFIG_STORE_KEY = 'fta_indicator_scanner_v4_2_config';
 
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -304,6 +368,65 @@ function saveSignals(list) {
   syncToSupabaseIfReady(list);
 }
 function setStatus(msg) { $('status').textContent = msg; }
+
+function getConfigFields() {
+  return ['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','proxyUrl','supaUrl','supaKey','supaEmail'];
+}
+function collectConfig() {
+  const cfg = {};
+  for (const id of getConfigFields()) {
+    const el = $(id);
+    if (el) cfg[id] = el.value;
+  }
+  return cfg;
+}
+function applyConfig(cfg = {}) {
+  for (const [id, value] of Object.entries(cfg || {})) {
+    const el = $(id);
+    if (el && value !== undefined && value !== null) el.value = value;
+  }
+  if (cfg.proxyUrl) localStorage.setItem(PROXY_URL_KEY, String(cfg.proxyUrl).trim().replace(/\/$/, ''));
+  if (cfg.supaUrl) localStorage.setItem(SUPA_URL_KEY, String(cfg.supaUrl).trim());
+  if (cfg.supaKey) localStorage.setItem(SUPA_KEY_KEY, String(cfg.supaKey).trim());
+  if (cfg.supaEmail) localStorage.setItem(SUPA_EMAIL_KEY, String(cfg.supaEmail).trim());
+}
+function saveConfigLocal() {
+  const cfg = collectConfig();
+  localStorage.setItem(CONFIG_STORE_KEY, JSON.stringify(cfg));
+  return cfg;
+}
+function loadConfigLocal() {
+  try { return JSON.parse(localStorage.getItem(CONFIG_STORE_KEY) || '{}'); }
+  catch { return {}; }
+}
+async function pushConfigToSupabase() {
+  const cfg = saveConfigLocal();
+  if (!supabaseClient || !supabaseSession) return setStatus('Đã lưu setting local. Muốn push cloud thì cần login Supabase.');
+  const row = { config_key: 'main', config: cfg, updated_at: new Date().toISOString() };
+  const { error } = await supabaseClient.from('user_configs').upsert(row, { onConflict: 'config_key' });
+  if (error) return setStatus('Push setting cloud lỗi: ' + error.message);
+  setStatus('Đã push setting lên Supabase. Thiết bị khác có thể Pull setting cloud.');
+}
+async function pullConfigFromSupabase() {
+  if (!supabaseClient || !supabaseSession) return setStatus('Chưa login Supabase.');
+  const { data, error } = await supabaseClient.from('user_configs').select('config, updated_at').eq('config_key','main').maybeSingle();
+  if (error) return setStatus('Pull setting cloud lỗi: ' + error.message);
+  if (!data?.config) return setStatus('Chưa có setting cloud để pull.');
+  applyConfig(data.config);
+  saveConfigLocal();
+  initProxyFromSettings();
+  initSupabaseFromSettings();
+  setStatus('Đã pull setting cloud và áp dụng vào form.');
+}
+function applyQualityPreset(preset = $('qualityPreset')?.value || 'SAFE') {
+  const sets = {
+    SAFE: { minScore:75, topN:25, scanSec:180, minVol:50000000, dupMin:240, expireHours:8, qMinStable:70, qMinAdx:25, qMinRr:1.4, qMaxEmaDist:0.8, qMaxVwapDist:1.2, qLongRsi:'45-68', qShortRsi:'32-55', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
+    BALANCED: { minScore:72, topN:35, scanSec:150, minVol:30000000, dupMin:180, expireHours:10, qMinStable:66, qMinAdx:22, qMinRr:1.3, qMaxEmaDist:1.0, qMaxVwapDist:1.5, qLongRsi:'43-70', qShortRsi:'30-57', qBtcFilter:'MEDIUM', qSignalMode:'TREND_AND_BREAKOUT', qLearningFilter:'ON' },
+    AGGRESSIVE: { minScore:68, topN:50, scanSec:120, minVol:20000000, dupMin:120, expireHours:12, qMinStable:60, qMinAdx:18, qMinRr:1.15, qMaxEmaDist:1.4, qMaxVwapDist:2.0, qLongRsi:'40-72', qShortRsi:'28-60', qBtcFilter:'SOFT', qSignalMode:'ALL', qLearningFilter:'OFF' }
+  };
+  applyConfig(sets[preset] || sets.SAFE);
+  saveConfigLocal();
+}
 
 function initSupabaseFromSettings() {
   const url = localStorage.getItem(SUPA_URL_KEY) || DEFAULT_SUPABASE_URL || '';
@@ -508,6 +631,68 @@ function makeSignalId(r, interval, signalTime) {
   const bucket = Math.floor(signalTime / 60000);
   return `${r.symbol}_${interval}_${r.side}_${bucket}`;
 }
+function parseRange(text, fallbackMin, fallbackMax) {
+  const parts = String(text || '').split('-').map(x => Number(String(x).trim()));
+  if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return [fallbackMin, fallbackMax];
+  return [parts[0], parts[1]];
+}
+function recentStatsForGate(r) {
+  const closed = loadSignals().filter(s => ['WIN','LOSS'].includes(s.status));
+  const sameSymbol = closed.filter(s => s.symbol === r.symbol).slice(0, 8);
+  const sameSide = closed.filter(s => s.side === r.side).slice(0, 20);
+  const wr = arr => arr.length ? arr.filter(s => s.status === 'WIN').length / arr.length * 100 : 100;
+  return { symbolN: sameSymbol.length, symbolWr: wr(sameSymbol), sideN: sameSide.length, sideWr: wr(sameSide) };
+}
+function qualityGate(r) {
+  const minStable = +$('qMinStable').value;
+  const minAdx = +$('qMinAdx').value;
+  const minRr = +$('qMinRr').value;
+  const maxEmaDist = +$('qMaxEmaDist').value;
+  const maxVwapDist = +$('qMaxVwapDist').value;
+  const [longRsiMin, longRsiMax] = parseRange($('qLongRsi').value, 45, 68);
+  const [shortRsiMin, shortRsiMax] = parseRange($('qShortRsi').value, 32, 55);
+  const btcMode = $('qBtcFilter').value;
+  const signalMode = $('qSignalMode').value;
+  const blocks = [];
+  const emaDist = Math.abs(r.price - r.ema20) / r.price * 100;
+  const vwapDist = Math.abs(r.price - r.vwap) / r.price * 100;
+
+  if (r.stability < minStable) blocks.push(`stability ${r.stability} < ${minStable}`);
+  if (r.adx < minAdx) blocks.push(`ADX ${fmt(r.adx,1)} < ${minAdx}`);
+  if (r.rr < minRr) blocks.push(`RR ${fmt(r.rr,2)} < ${minRr}`);
+  if (emaDist > maxEmaDist) blocks.push(`xa EMA20 ${fmt(emaDist,2)}% > ${maxEmaDist}%`);
+  if (vwapDist > maxVwapDist) blocks.push(`xa VWAP ${fmt(vwapDist,2)}% > ${maxVwapDist}%`);
+  if (signalMode === 'TREND_PULLBACK' && r.setupType !== 'TREND_PULLBACK') blocks.push(`setup ${r.setupType || 'NONE'} không phải Trend Pullback`);
+  if (signalMode === 'TREND_AND_BREAKOUT' && !['TREND_PULLBACK','BREAKOUT'].includes(r.setupType)) blocks.push(`setup ${r.setupType || 'NONE'} không đạt`);
+
+  if (r.side === 'LONG') {
+    if (!(r.price > r.vwap)) blocks.push('LONG nhưng giá dưới VWAP');
+    if (!(r.ema20 > r.ema50)) blocks.push('LONG nhưng EMA20 chưa trên EMA50');
+    if (r.rsi < longRsiMin || r.rsi > longRsiMax) blocks.push(`LONG RSI ${fmt(r.rsi,1)} ngoài ${longRsiMin}-${longRsiMax}`);
+    if (btcMode === 'STRICT' && !lastBtcTrend.longOk) blocks.push('BTC trend không ủng hộ LONG');
+    if (btcMode === 'MEDIUM' && lastBtcTrend.mode === 'BTC_BEAR') blocks.push('BTC đang bearish, chặn LONG');
+  }
+  if (r.side === 'SHORT') {
+    if (!(r.price < r.vwap)) blocks.push('SHORT nhưng giá trên VWAP');
+    if (!(r.ema20 < r.ema50)) blocks.push('SHORT nhưng EMA20 chưa dưới EMA50');
+    if (r.rsi < shortRsiMin || r.rsi > shortRsiMax) blocks.push(`SHORT RSI ${fmt(r.rsi,1)} ngoài ${shortRsiMin}-${shortRsiMax}`);
+    if (btcMode === 'STRICT' && !lastBtcTrend.shortOk) blocks.push('BTC trend không ủng hộ SHORT');
+    if (btcMode === 'MEDIUM' && lastBtcTrend.mode === 'BTC_BULL') blocks.push('BTC đang bullish, chặn SHORT');
+  }
+
+  if ($('qLearningFilter').value === 'ON') {
+    const st = recentStatsForGate(r);
+    if (st.symbolN >= 3 && st.symbolWr < 25) blocks.push(`${r.symbol} đang thua nhiều: ${fmt(st.symbolWr,0)}%/${st.symbolN} mẫu`);
+    if (st.sideN >= 8 && st.sideWr < 30) blocks.push(`${r.side} đang thua nhiều: ${fmt(st.sideWr,0)}%/${st.sideN} mẫu`);
+  }
+
+  let penalty = 0;
+  if (btcMode === 'SOFT') {
+    if (r.side === 'LONG' && !lastBtcTrend.longOk) penalty -= 8;
+    if (r.side === 'SHORT' && !lastBtcTrend.shortOk) penalty -= 8;
+  }
+  return { ok: blocks.length === 0, blocks, emaDist, vwapDist, adjustedScore: Math.round(clamp(r.score + penalty, 0, 100)) };
+}
 function isDuplicateSignal(existing, candidate) {
   const dupWindow = +$('dupMin').value * 60 * 1000;
   const nearEntryPct = Math.abs(existing.entry - candidate.entry) / candidate.entry * 100;
@@ -517,6 +702,27 @@ function isDuplicateSignal(existing, candidate) {
     Math.abs(existing.signalTime - candidate.signalTime) <= dupWindow &&
     nearEntryPct <= 0.55 &&
     !['WIN','LOSS','EXPIRED','CANCELLED'].includes(existing.status);
+}
+
+async function getBtcTrend(interval) {
+  try {
+    const rows = await getJSON(`/fapi/v1/klines?symbol=BTCUSDT&interval=${interval}&limit=160`);
+    const kl = parseKlines(rows);
+    const closes = kl.map(k=>k.close);
+    const price = closes.at(-1);
+    const e20 = ema(closes,20).at(-1);
+    const e50 = ema(closes,50).at(-1);
+    const e120 = ema(closes,120).at(-1);
+    const ax = adx(kl,14).at(-1);
+    const vw = vwap(kl,48);
+    const longOk = price > vw && e20 > e50 && price > e120 && ax >= 18;
+    const shortOk = price < vw && e20 < e50 && price < e120 && ax >= 18;
+    const mode = longOk ? 'BTC_BULL' : shortOk ? 'BTC_BEAR' : 'BTC_NEUTRAL';
+    return { mode, longOk, shortOk, price, e20, e50, vwap: vw, adx: ax, note: `${mode} · ADX ${fmt(ax,1)}` };
+  } catch(e) {
+    console.warn('BTC trend filter error', e);
+    return { mode: 'UNKNOWN', longOk: true, shortOk: true, note: 'BTC filter lỗi, tạm không chặn' };
+  }
 }
 
 async function scanSymbol(t, interval) {
@@ -545,12 +751,21 @@ async function scanSymbol(t, interval) {
   const volOk = volNow >= volMean * 0.75;
   const notOverLong = r.at(-1) < 72;
   const notOverShort = r.at(-1) > 28;
-  const nearEntry = Math.abs(price - e20.at(-1)) / price * 100 < 1.25 || Math.abs(price - vw) / price * 100 < 1.5;
+  const emaDist = Math.abs(price - e20.at(-1)) / price * 100;
+  const vwapDist = Math.abs(price - vw) / price * 100;
+  const nearEntry = emaDist < 1.1 || vwapDist < 1.4;
+  const high20 = Math.max(...kl.slice(-22,-2).map(k=>k.high));
+  const low20 = Math.min(...kl.slice(-22,-2).map(k=>k.low));
+  const volSpike = volNow >= volMean * 1.35;
+  const breakoutLong = price > high20 && volSpike && price > vw && ax.at(-1) >= 22;
+  const breakoutShort = price < low20 && volSpike && price < vw && ax.at(-1) >= 22;
+  const trendPullbackLong = upTrend && price > vw && emaDist <= 1.1 && r.at(-1) >= 43 && r.at(-1) <= 70 && last.close >= e20.at(-1);
+  const trendPullbackShort = downTrend && price < vw && emaDist <= 1.1 && r.at(-1) >= 30 && r.at(-1) <= 57 && last.close <= e20.at(-1);
 
   let side = "WAIT", score = 0, reasons = [];
   const base = (stab*0.25) + (adxStrong ? 16 : 5) + (volOk ? 12 : 4) + (nearEntry ? 12 : 3);
-  const longScore = base + (upTrend?24:0) + (macdUp?14:0) + (price>vw?8:0) + (notOverLong?8:0);
-  const shortScore = base + (downTrend?24:0) + (macdDown?14:0) + (price<vw?8:0) + (notOverShort?8:0);
+  const longScore = base + (upTrend?24:0) + (macdUp?14:0) + (price>vw?8:0) + (notOverLong?8:0) + (trendPullbackLong?10:0) + (breakoutLong?8:0);
+  const shortScore = base + (downTrend?24:0) + (macdDown?14:0) + (price<vw?8:0) + (notOverShort?8:0) + (trendPullbackShort?10:0) + (breakoutShort?8:0);
 
   if (longScore >= shortScore && longScore >= 55) { side = "LONG"; score = longScore; }
   else if (shortScore > longScore && shortScore >= 55) { side = "SHORT"; score = shortScore; }
@@ -563,11 +778,20 @@ async function scanSymbol(t, interval) {
   if (adxStrong) reasons.push(`ADX ${fmt(ax.at(-1),1)} có trend`);
   if (price > vw) reasons.push("Giá trên VWAP"); else reasons.push("Giá dưới VWAP");
   if (stab >= 65) reasons.push(`Nến ổn định ${fmt(stab,0)}/100`);
+  let setupType = 'NONE';
+  if (side === 'LONG' && trendPullbackLong) setupType = 'TREND_PULLBACK';
+  else if (side === 'SHORT' && trendPullbackShort) setupType = 'TREND_PULLBACK';
+  else if (side === 'LONG' && breakoutLong) setupType = 'BREAKOUT';
+  else if (side === 'SHORT' && breakoutShort) setupType = 'BREAKOUT';
+  if (setupType !== 'NONE') reasons.push(`Setup ${setupType}`);
 
+  const swingLow = Math.min(...kl.slice(-14).map(k=>k.low));
+  const swingHigh = Math.max(...kl.slice(-14).map(k=>k.high));
   const entry = side === "LONG" ? Math.min(price, e20.at(-1)*1.002) : side === "SHORT" ? Math.max(price, e20.at(-1)*0.998) : price;
-  const sl = side === "LONG" ? entry - atrNow*1.15 : side === "SHORT" ? entry + atrNow*1.15 : null;
-  const tp1 = side === "LONG" ? entry + atrNow*1.25 : side === "SHORT" ? entry - atrNow*1.25 : null;
-  const tp2 = side === "LONG" ? entry + atrNow*2.0 : side === "SHORT" ? entry - atrNow*2.0 : null;
+  const sl = side === "LONG" ? Math.min(entry - atrNow*1.15, swingLow - atrNow*0.12) : side === "SHORT" ? Math.max(entry + atrNow*1.15, swingHigh + atrNow*0.12) : null;
+  const risk = sl ? Math.abs(entry - sl) : 0;
+  const tp1 = side === "LONG" ? entry + risk*1.0 : side === "SHORT" ? entry - risk*1.0 : null;
+  const tp2 = side === "LONG" ? entry + risk*1.6 : side === "SHORT" ? entry - risk*1.6 : null;
   const rr = tp2 && sl ? Math.abs(tp2-entry)/Math.abs(entry-sl) : 0;
 
   return {
@@ -577,6 +801,7 @@ async function scanSymbol(t, interval) {
     price, side, score: Math.round(clamp(score,0,100)), entry, sl, tp1, tp2, rr,
     rsi: r.at(-1), adx: ax.at(-1), macdHist: m.hist.at(-1), ema20: e20.at(-1), ema50: e50.at(-1), vwap: vw,
     stability: Math.round(stab), reasons,
+    setupType, emaDist, vwapDist,
     rawSignalCloseTime: last.closeTime
   };
 }
@@ -589,14 +814,20 @@ function createSignalsFromScan(rows) {
   const signalTime = nowMs();
 
   for (const r of rows) {
-    if (r.side === 'WAIT' || r.score < minScore) continue;
+    if (r.side === 'WAIT') continue;
+    const gate = qualityGate(r);
+    if (gate.adjustedScore < minScore) continue;
+    if (!gate.ok) {
+      r.qualityBlocked = gate.blocks;
+      continue;
+    }
     const candidate = {
       id: makeSignalId(r, interval, signalTime),
       symbol: r.symbol,
       interval,
       trackInterval: $('trackInterval').value,
       side: r.side,
-      score: r.score,
+      score: qualityGate(r).adjustedScore,
       stability: r.stability,
       quoteVolume: r.quoteVolume,
       signalPrice: r.price,
@@ -610,7 +841,7 @@ function createSignalsFromScan(rows) {
       vwap: r.vwap,
       ema20: r.ema20,
       ema50: r.ema50,
-      reasons: r.reasons,
+      reasons: [...r.reasons, 'Quality Gate OK', lastBtcTrend.note],
       signalTime,
       createdAt: new Date(signalTime).toISOString(),
       status: 'NEW',
@@ -644,6 +875,8 @@ async function scan() {
       getJSON('/fapi/v1/exchangeInfo'),
       getJSON('/fapi/v1/ticker/24hr')
     ]);
+    lastBtcTrend = await getBtcTrend($('interval').value);
+    setStatus(`BTC trend filter: ${lastBtcTrend.note}`);
     const tradable = new Set(info.symbols.filter(s => s.contractType === 'PERPETUAL' && s.quoteAsset === 'USDT' && s.status === 'TRADING').map(s => s.symbol));
     const minVol = +$('minVol').value;
     const topN = +$('topN').value;
@@ -664,7 +897,7 @@ async function scan() {
     renderScan(results);
     renderLog();
     renderStats();
-    setStatus(`Hoàn tất. Đã quét ${results.length} symbol, tạo ${newCount} tín hiệu mới. Tín hiệu cũ không bị đổi Signal Time.`);
+    setStatus(`Hoàn tất. Đã quét ${results.length} symbol, tạo ${newCount} tín hiệu mới. BTC: ${lastBtcTrend.note}. Winrate Engine đã chặn tín hiệu yếu.`);
   } catch (e) {
     setStatus('Lỗi lấy dữ liệu: ' + e.message + '. Nếu bị Failed to fetch/CORS, hãy chạy qua Cloudflare Worker proxy.');
   } finally { btn.disabled = false; }
@@ -784,7 +1017,7 @@ function renderScan(rows) {
       <td>Giá: <b>${fmt(r.price,6)}</b><br>Entry nghiên cứu: <b>${fmt(r.entry,6)}</b></td>
       <td>${r.side === 'WAIT' ? '<span class="muted">Chưa đủ điều kiện</span>' : `SL: <b>${fmt(r.sl,6)}</b><br>TP1: <b>${fmt(r.tp1,6)}</b><br>TP2: <b>${fmt(r.tp2,6)}</b><br>RR: <b>${fmt(r.rr,2)}</b>`}</td>
       <td><span class="pill">RSI ${fmt(r.rsi,1)}</span><span class="pill">ADX ${fmt(r.adx,1)}</span><span class="pill">EMA20 ${fmt(r.ema20,6)}</span><span class="pill">EMA50 ${fmt(r.ema50,6)}</span><span class="pill">VWAP ${fmt(r.vwap,6)}</span></td>
-      <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}</td>
+      <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}${r.qualityBlocked ? '<br><span class="bad">Gate chặn: ' + r.qualityBlocked.join(' · ') + '</span>' : ''}</td>
     </tr>`;
   }).join('');
   updateMetrics(rows);
@@ -905,6 +1138,11 @@ $('tabScan').onclick = () => showTab('scan');
 $('tabLog').onclick = () => showTab('log');
 $('tabStats').onclick = () => showTab('stats');
 ['sideFilter','sortBy'].forEach(id => $(id).addEventListener('change', () => renderScan(lastScanRows)));
+$('qualityPreset').addEventListener('change', () => applyQualityPreset($('qualityPreset').value));
+['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode'].forEach(id => {
+  const el = $(id);
+  if (el) el.addEventListener('change', () => saveConfigLocal());
+});
 $('proxySaveBtn').onclick = () => {
   const url = $('proxyUrl').value.trim().replace(/\/$/, '');
   localStorage.setItem(PROXY_URL_KEY, url);
@@ -922,7 +1160,10 @@ $('supaLoginBtn').onclick = signInSupabase;
 $('supaLogoutBtn').onclick = signOutSupabase;
 $('supaPullBtn').onclick = pullFromSupabase;
 $('supaPushBtn').onclick = pushToSupabase;
+$('configPushBtn').onclick = pushConfigToSupabase;
+$('configPullBtn').onclick = pullConfigFromSupabase;
 
+applyConfig(loadConfigLocal());
 initProxyFromSettings();
 initSupabaseFromSettings();
 renderLog();
