@@ -99,6 +99,17 @@
     .bad { color: var(--red); }
     .warn { color: var(--yellow); }
     .muted { color: var(--muted); }
+    .market-dashboard { display:grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .market-card { border:1px solid var(--border); border-radius:16px; background:#0b1220; padding:12px 14px; }
+    .market-card span { display:block; color:var(--muted); font-size:12px; margin-bottom:7px; }
+    .market-card b { font-size:17px; color:var(--text); }
+    .level { display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:4px 8px; font-size:11px; font-weight:900; margin-top:6px; }
+    .premium { color:#06140d; background:#20d489; }
+    .valid { color:#071423; background:#7dd3fc; }
+    .watchlist { color:#241b00; background:#ffd166; }
+    .avoid { color:#fff; background:#7a3145; }
+    .rspos { color:#42f5a7; }
+    .rsneg { color:#ff6b8a; }
     .cards { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: clamp(8px, .8vw, 12px); margin-bottom: 12px; }
     .mini { background: #0b1220; border: 1px solid var(--border); border-radius: 16px; padding: 12px; color: var(--muted); }
     .mini b { display:block; font-size: 20px; margin-top: 4px; color: var(--text); }
@@ -127,6 +138,7 @@
     .signal-link { color: var(--muted); text-decoration: none; }
     .signal-link:hover { color: var(--blue); text-decoration: underline; }
     @media (max-width: 1100px) {
+      .market-dashboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .sticky-control { grid-template-columns: 1fr 1fr; top: 0; }
       .sticky-status { grid-column: 1 / -1; }
       .grid { grid-template-columns: 1fr; }
@@ -142,6 +154,7 @@
       th, td { padding: 11px 10px; }
     }
     @media (max-width: 640px) {
+      .market-dashboard { grid-template-columns: 1fr; }
       .sticky-control { grid-template-columns: 1fr; border-radius: 14px; }
       .cards { grid-template-columns: 1fr; }
       .row { grid-template-columns: 1fr; }
@@ -293,6 +306,26 @@
             <option value="ALL">All - chỉ forward-test</option>
           </select>
         </label>
+        <div class="row">
+          <label>Weak sau entry, phút
+            <input id="weakMin" type="number" min="15" max="240" value="90" />
+          </label>
+          <label>MFE tối thiểu tới TP1 %
+            <input id="weakMfePct" type="number" min="10" max="90" value="50" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Max active / symbol
+            <input id="maxActiveSymbol" type="number" min="1" max="5" value="1" />
+          </label>
+          <label>Batch test name
+            <input id="batchName" type="text" value="v4.5-safe-001" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="newBatchBtn" class="secondary">Tạo batch mới</button>
+          <button id="batchSummaryBtn" class="secondary">Tóm tắt batch</button>
+        </div>
         <button id="autoBtn" class="secondary">Bật auto scan</button>
         <button id="exportBtn" class="secondary">Export log JSON</button>
         <button id="importBtn" class="secondary">Import log JSON</button>
@@ -345,6 +378,15 @@
     </aside>
 
     <main>
+      <div class="market-dashboard">
+        <div class="market-card"><span>Market Regime</span><b id="mRegime">UNKNOWN</b></div>
+        <div class="market-card"><span>BTC ADX</span><b id="mBtcAdx">-</b></div>
+        <div class="market-card"><span>Trading Bias</span><b id="mBias">WAIT</b></div>
+        <div class="market-card"><span>RS Filter</span><b id="mRsFilter">vs BTC</b></div>
+        <div class="market-card"><span>API Health</span><b id="mApiHealth">UNKNOWN</b></div>
+        <div class="market-card"><span>Current Batch</span><b id="mBatch">-</b></div>
+      </div>
+
       <div class="cards">
         <div class="mini">Đã quét<b id="mScanned">0</b></div>
         <div class="mini">Tín hiệu mới<b id="mNew">0</b></div>
@@ -408,6 +450,7 @@
             <th>TP2 rate</th>
             <th>Reaction rate</th>
             <th>Loss rate</th>
+            <th>Weak rate</th>
             <th>Ghi chú</th>
           </tr>
           </thead>
@@ -439,8 +482,25 @@ let lastScanRows = [];
 let supabaseClient = null;
 let supabaseSession = null;
 let cloudSyncBusy = false;
-let lastBtcTrend = { mode: 'UNKNOWN', longOk: true, shortOk: true, note: 'BTC filter chưa chạy' };
+let lastBtcTrend = { mode: 'UNKNOWN', longOk: true, shortOk: true, note: 'BTC filter chưa chạy', adx: 0, change1h: 0, change4h: 0, price: 0 };
+let apiHealth = { status: 'UNKNOWN', lastOk: null, lastError: '', requestCount: 0 };
+const BATCH_KEY = 'fta_current_batch_v4_5';
 const CONFIG_STORE_KEY = 'fta_indicator_scanner_v4_2_config';
+function getCurrentBatch() {
+  let batch = localStorage.getItem(BATCH_KEY) || '';
+  if (!batch) {
+    batch = ($('batchName')?.value || 'v4.5-safe-001').trim() || 'v4.5-safe-001';
+    localStorage.setItem(BATCH_KEY, batch);
+  }
+  return batch;
+}
+function setCurrentBatch(name) {
+  const clean = String(name || '').trim() || `batch-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}`;
+  localStorage.setItem(BATCH_KEY, clean);
+  if ($('batchName')) $('batchName').value = clean;
+  updateMarketDashboard?.();
+  return clean;
+}
 
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -475,7 +535,7 @@ function setStatus(msg) {
 }
 
 function getConfigFields() {
-  return ['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','proxyUrl','supaUrl','supaKey','supaEmail'];
+  return ['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','batchName','proxyUrl','supaUrl','supaKey','supaEmail'];
 }
 function collectConfig() {
   const cfg = {};
@@ -530,9 +590,9 @@ async function pullConfigFromSupabase() {
 }
 function applyQualityPreset(preset = $('qualityPreset')?.value || 'SAFE') {
   const sets = {
-    SAFE: { minScore:75, topN:20, scanSec:300, minVol:50000000, dupMin:240, expireHours:4, qMinStable:68, qMinAdx:25, qMinRr:1.35, qMaxEmaDist:0.7, qMaxVwapDist:1.0, qMinEmaSpread:0.15, qLongRsi:'48-64', qShortRsi:'36-50', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
-    BALANCED: { minScore:72, topN:25, scanSec:240, minVol:50000000, dupMin:180, expireHours:4, qMinStable:65, qMinAdx:24, qMinRr:1.3, qMaxEmaDist:0.9, qMaxVwapDist:1.2, qMinEmaSpread:0.12, qLongRsi:'46-66', qShortRsi:'34-52', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
-    AGGRESSIVE: { minScore:68, topN:35, scanSec:180, minVol:30000000, dupMin:120, expireHours:6, qMinStable:60, qMinAdx:20, qMinRr:1.15, qMaxEmaDist:1.2, qMaxVwapDist:1.8, qMinEmaSpread:0.08, qLongRsi:'42-70', qShortRsi:'30-58', qBtcFilter:'MEDIUM', qSignalMode:'TREND_AND_BREAKOUT', qLearningFilter:'OFF' }
+    SAFE: { minScore:75, topN:20, scanSec:300, minVol:50000000, dupMin:240, expireHours:4, qMinStable:68, qMinAdx:25, qMinRr:1.35, qMaxEmaDist:0.7, qMaxVwapDist:1.0, qMinEmaSpread:0.15, qLongRsi:'48-64', qShortRsi:'36-50', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON', weakMin:90, weakMfePct:50, maxActiveSymbol:1 },
+    BALANCED: { minScore:72, topN:25, scanSec:240, minVol:50000000, dupMin:180, expireHours:4, qMinStable:65, qMinAdx:24, qMinRr:1.3, qMaxEmaDist:0.9, qMaxVwapDist:1.2, qMinEmaSpread:0.12, qLongRsi:'46-66', qShortRsi:'34-52', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON', weakMin:90, weakMfePct:50, maxActiveSymbol:1 },
+    AGGRESSIVE: { minScore:68, topN:35, scanSec:180, minVol:30000000, dupMin:120, expireHours:6, qMinStable:60, qMinAdx:20, qMinRr:1.15, qMaxEmaDist:1.2, qMaxVwapDist:1.8, qMinEmaSpread:0.08, qLongRsi:'42-70', qShortRsi:'30-58', qBtcFilter:'MEDIUM', qSignalMode:'TREND_AND_BREAKOUT', qLearningFilter:'OFF', weakMin:120, weakMfePct:40, maxActiveSymbol:2 }
   };
   applyConfig(sets[preset] || sets.SAFE);
   saveConfigLocal();
@@ -628,16 +688,27 @@ async function pushToSupabase() {
 
 async function getJSON(path) {
   const base = getApiBase();
+  apiHealth.requestCount++;
   const r = await fetch(base + path, { method: 'GET' });
   if (!r.ok) {
     const retryAfter = r.headers.get('Retry-After') || r.headers.get('retry-after') || '';
     let body = '';
     try { body = await r.text(); } catch {}
     if (r.status === 418 || r.status === 429) {
+      apiHealth.status = `RATE_LIMIT_${r.status}`;
+      apiHealth.lastError = `${base}${path} ${body.slice(0,120)}`;
+      updateMarketDashboard?.();
       throw new Error(`BINANCE_RATE_LIMIT_${r.status}: Proxy/IP đang bị Binance rate-limit hoặc auto-ban. ${retryAfter ? 'Retry-After: ' + retryAfter + '. ' : ''}${base}${path} ${body.slice(0,160)}`);
     }
+    apiHealth.status = `ERROR_${r.status}`;
+    apiHealth.lastError = `${base}${path} ${body.slice(0,120)}`;
+    updateMarketDashboard?.();
     throw new Error(`${r.status} ${r.statusText}: ${base}${path} ${body.slice(0,160)}`);
   }
+  apiHealth.status = 'OK';
+  apiHealth.lastOk = new Date().toISOString();
+  apiHealth.lastError = '';
+  updateMarketDashboard?.();
   return r.json();
 }
 async function testProxy() {
@@ -763,16 +834,19 @@ function parseRange(text, fallbackMin, fallbackMax) {
 function isFullWinStatus(status) { return ['TP2_WIN','WIN'].includes(status); }
 function isTp1OnlyStatus(status) { return ['TP1_ONLY'].includes(status); }
 function isLossStatus(status) { return status === 'LOSS'; }
-function isClosedResultStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN'].includes(status); }
+function isWeakStatus(status) { return status === 'WEAK_AFTER_ENTRY'; }
+function isClosedResultStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN','WEAK_AFTER_ENTRY'].includes(status); }
 function calcLearningRates(arr) {
   const total = arr.length;
   const tp2 = arr.filter(s => isFullWinStatus(s.status)).length;
   const tp1Only = arr.filter(s => isTp1OnlyStatus(s.status)).length;
   const loss = arr.filter(s => isLossStatus(s.status)).length;
+  const weak = arr.filter(s => isWeakStatus(s.status)).length;
   const fullWinRate = total ? tp2 / total * 100 : 100;
   const reactionRate = total ? (tp2 + tp1Only) / total * 100 : 100;
   const lossRate = total ? loss / total * 100 : 0;
-  return { total, tp2, tp1Only, loss, fullWinRate, reactionRate, lossRate };
+  const weakRate = total ? weak / total * 100 : 0;
+  return { total, tp2, tp1Only, loss, weak, fullWinRate, reactionRate, lossRate, weakRate };
 }
 function recentStatsForGate(r) {
   const closed = loadSignals().filter(s => isClosedResultStatus(s.status));
@@ -807,6 +881,8 @@ function qualityGate(r) {
   if (r.stability < minStable) blocks.push(`stability ${r.stability} < ${minStable}`);
   if (r.adx < minAdx) blocks.push(`ADX ${fmt(r.adx,1)} < ${minAdx}`);
   if (r.rr < minRr) blocks.push(`RR ${fmt(r.rr,2)} < ${minRr}`);
+  r.planQuality = tradePlanQuality(r);
+  if (r.planQuality.grade === 'C') blocks.push(`Trade Plan C: Entry ${r.planQuality.entryQuality}, SL ${r.planQuality.slQuality}, TP ${r.planQuality.tpQuality}`);
   if (emaDist > maxEmaDist) blocks.push(`xa EMA20 ${fmt(emaDist,2)}% > ${maxEmaDist}%`);
   if (vwapDist > maxVwapDist) blocks.push(`xa VWAP ${fmt(vwapDist,2)}% > ${maxVwapDist}%`);
   if (emaSpread < minEmaSpread) blocks.push(`EMA20/50 quá sát ${fmt(emaSpread,2)}% < ${minEmaSpread}%`);
@@ -814,6 +890,7 @@ function qualityGate(r) {
   if (signalMode === 'TREND_AND_BREAKOUT' && !['TREND_PULLBACK','BREAKOUT'].includes(r.setupType)) blocks.push(`setup ${r.setupType || 'NONE'} không đạt`);
 
   if (r.side === 'LONG') {
+    if (r.tpResistanceDistPct !== undefined && r.tpResistanceDistPct < 0.25) blocks.push('TP1 quá gần kháng cự/swing high');
     if (!(r.price > r.vwap)) blocks.push('LONG nhưng giá dưới VWAP');
     if (!(r.ema20 > r.ema50)) blocks.push('LONG nhưng EMA20 chưa trên EMA50');
     if (r.setupType === 'TREND_PULLBACK' && !r.macdUp) blocks.push('LONG Trend Pullback nhưng MACD histogram chưa tăng');
@@ -823,6 +900,7 @@ function qualityGate(r) {
     if (btcMode === 'MEDIUM' && lastBtcTrend.mode === 'BTC_BEAR') blocks.push('BTC đang bearish, chặn LONG');
   }
   if (r.side === 'SHORT') {
+    if (r.tpSupportDistPct !== undefined && r.tpSupportDistPct < 0.25) blocks.push('TP1 quá gần hỗ trợ/swing low');
     if (!(r.price < r.vwap)) blocks.push('SHORT nhưng giá trên VWAP');
     if (!(r.ema20 < r.ema50)) blocks.push('SHORT nhưng EMA20 chưa dưới EMA50');
     if (r.setupType === 'TREND_PULLBACK' && !r.macdDown) blocks.push('SHORT Trend Pullback nhưng MACD histogram chưa giảm');
@@ -895,10 +973,12 @@ async function getBtcTrend(interval) {
     const longOk = price > vw && e20 > e50 && price > e120 && ax >= 18;
     const shortOk = price < vw && e20 < e50 && price < e120 && ax >= 18;
     const mode = longOk ? 'BTC_BULL' : shortOk ? 'BTC_BEAR' : 'BTC_NEUTRAL';
-    return { mode, longOk, shortOk, price, e20, e50, vwap: vw, adx: ax, note: `${mode} · ADX ${fmt(ax,1)}` };
+    const change1h = pctChangeFrom(kl, interval === '5m' ? 12 : interval === '15m' ? 4 : 1);
+    const change4h = pctChangeFrom(kl, interval === '5m' ? 48 : interval === '15m' ? 16 : 4);
+    return { mode, longOk, shortOk, price, e20, e50, vwap: vw, adx: ax, change1h, change4h, note: `${mode} · ADX ${fmt(ax,1)} · BTC 1h ${fmt(change1h,2)}%` };
   } catch(e) {
     console.warn('BTC trend filter error', e);
-    return { mode: 'UNKNOWN', longOk: true, shortOk: true, note: 'BTC filter lỗi, tạm không chặn' };
+    return { mode: 'UNKNOWN', longOk: true, shortOk: true, adx: 0, change1h: 0, change4h: 0, note: 'BTC filter lỗi, tạm không chặn' };
   }
 }
 
@@ -916,6 +996,10 @@ async function scanSymbol(t, interval) {
   const vw = vwap(kl,48);
   const stab = stabilityScore(kl);
   const price = last.close;
+  const change1h = pctChangeFrom(kl, interval === '5m' ? 12 : interval === '15m' ? 4 : 1);
+  const change4h = pctChangeFrom(kl, interval === '5m' ? 48 : interval === '15m' ? 16 : 4);
+  const rs1h = change1h - (lastBtcTrend.change1h || 0);
+  const rs4h = change4h - (lastBtcTrend.change4h || 0);
   const atrNow = a[a.length-1] || price*0.008;
   const volNow = vols[vols.length-1];
   const volMean = avg(vols.slice(-30));
@@ -964,24 +1048,32 @@ async function scanSymbol(t, interval) {
   else if (side === 'LONG' && breakoutLong) setupType = 'BREAKOUT';
   else if (side === 'SHORT' && breakoutShort) setupType = 'BREAKOUT';
   if (setupType !== 'NONE') reasons.push(`Setup ${setupType}`);
+  reasons.push(`RS vs BTC 1h ${fmt(rs1h,2)}% · 4h ${fmt(rs4h,2)}%`);
 
+  const recent = kl.slice(-28);
   const swingLow = Math.min(...kl.slice(-14).map(k=>k.low));
   const swingHigh = Math.max(...kl.slice(-14).map(k=>k.high));
+  const resistance = Math.max(...recent.slice(0, -1).map(k=>k.high));
+  const support = Math.min(...recent.slice(0, -1).map(k=>k.low));
   const entry = side === "LONG" ? Math.min(price, e20.at(-1)*1.002) : side === "SHORT" ? Math.max(price, e20.at(-1)*0.998) : price;
   const sl = side === "LONG" ? Math.min(entry - atrNow*1.15, swingLow - atrNow*0.12) : side === "SHORT" ? Math.max(entry + atrNow*1.15, swingHigh + atrNow*0.12) : null;
   const risk = sl ? Math.abs(entry - sl) : 0;
   const tp1 = side === "LONG" ? entry + risk*1.0 : side === "SHORT" ? entry - risk*1.0 : null;
   const tp2 = side === "LONG" ? entry + risk*1.6 : side === "SHORT" ? entry - risk*1.6 : null;
   const rr = tp2 && sl ? Math.abs(tp2-entry)/Math.abs(entry-sl) : 0;
+  const tpResistanceDistPct = side === 'LONG' && resistance ? Math.abs(resistance - tp1) / Math.max(tp1, 1e-12) * 100 : undefined;
+  const tpSupportDistPct = side === 'SHORT' && support ? Math.abs(support - tp1) / Math.max(tp1, 1e-12) * 100 : undefined;
 
   return {
     symbol: t.symbol,
     quoteVolume: +t.quoteVolume,
     change: +t.priceChangePercent,
     price, side, score: Math.round(clamp(score,0,100)), entry, sl, tp1, tp2, rr,
+    change1h, change4h, rs1h, rs4h,
     rsi: r.at(-1), adx: ax.at(-1), macdHist: m.hist.at(-1), ema20: e20.at(-1), ema50: e50.at(-1), vwap: vw,
     stability: Math.round(stab), reasons,
     setupType, emaDist, vwapDist,
+    resistance, support, tpResistanceDistPct, tpSupportDistPct,
     macdUp, macdDown, confirmLong, confirmShort,
     rawSignalCloseTime: last.closeTime
   };
@@ -997,9 +1089,19 @@ function createSignalsFromScan(rows) {
   for (const r of rows) {
     if (r.side === 'WAIT') continue;
     const gate = qualityGate(r);
+    r.adjustedScore = gate.adjustedScore;
     if (gate.adjustedScore < minScore) continue;
     if (!gate.ok) {
       r.qualityBlocked = gate.blocks;
+      r.signalLevel = classifySignalLevel(r).level;
+      continue;
+    }
+    const levelInfo = classifySignalLevel(r);
+    r.signalLevel = levelInfo.level;
+    const maxActive = +$('maxActiveSymbol').value || 1;
+    if (activeCountFor(r.symbol, r.side) >= maxActive) {
+      r.qualityBlocked = [`Đã có ${maxActive} lệnh active cho ${r.symbol} ${r.side}`];
+      r.signalLevel = 'AVOID';
       continue;
     }
     const candidate = {
@@ -1008,7 +1110,12 @@ function createSignalsFromScan(rows) {
       interval,
       trackInterval: $('trackInterval').value,
       side: r.side,
-      score: qualityGate(r).adjustedScore,
+      score: gate.adjustedScore,
+      signalLevel: levelInfo.level,
+      batchId: getCurrentBatch(),
+      planQuality: r.planQuality || tradePlanQuality(r),
+      rs1h: r.rs1h,
+      rs4h: r.rs4h,
       stability: r.stability,
       quoteVolume: r.quoteVolume,
       signalPrice: r.price,
@@ -1023,7 +1130,7 @@ function createSignalsFromScan(rows) {
       vwap: r.vwap,
       ema20: r.ema20,
       ema50: r.ema50,
-      reasons: [...r.reasons, 'Quality Gate OK', lastBtcTrend.note],
+      reasons: [...r.reasons, `Signal Level ${levelInfo.level}`, 'Quality Gate OK', lastBtcTrend.note],
       signalTime,
       createdAt: new Date(signalTime).toISOString(),
       status: 'NEW',
@@ -1058,6 +1165,7 @@ async function scan() {
       getJSON('/fapi/v1/ticker/24hr')
     ]);
     lastBtcTrend = await getBtcTrend($('interval').value);
+    updateMarketDashboard();
     setStatus(`BTC trend filter: ${lastBtcTrend.note}`);
     const tradable = new Set(info.symbols.filter(s => s.contractType === 'PERPETUAL' && s.quoteAsset === 'USDT' && s.status === 'TRADING').map(s => s.symbol));
     const minVol = +$('minVol').value;
@@ -1167,7 +1275,20 @@ async function forwardTestOne(s) {
   }
   s.mfe = maxFav;
   s.mae = maxAdv;
-  if (!expiredByTime && !['TP2_WIN','TP1_ONLY','LOSS','WIN','EXPIRED','CANCELLED'].includes(s.status) && Date.now() > expireAt) {
+  const closedStatuses = ['TP2_WIN','TP1_ONLY','LOSS','WIN','EXPIRED','CANCELLED','WEAK_AFTER_ENTRY'];
+  if (s.entryHitTime && !closedStatuses.includes(s.status)) {
+    const weakAt = s.entryHitTime + ((+$('weakMin').value || 90) * 60 * 1000);
+    const tp1Dist = Math.abs(s.tp1 - s.entry);
+    const mfeDistance = (Number(s.mfe || 0) / 100) * Math.max(s.entry, 1e-12);
+    const required = tp1Dist * ((+$('weakMfePct').value || 50) / 100);
+    if (Date.now() > weakAt && !s.tp1HitTime && mfeDistance < required) {
+      s.status = 'WEAK_AFTER_ENTRY';
+      s.closeTime = Date.now();
+      s.result = `WEAK_AFTER_ENTRY_MFE_${fmt(Number(s.mfe||0),2)}%`;
+      s.notes = [...(s.notes || []), `Weak: sau ${$('weakMin').value} phút MFE chưa đạt ${$('weakMfePct').value}% khoảng cách tới TP1`];
+    }
+  }
+  if (!expiredByTime && !closedStatuses.includes(s.status) && Date.now() > expireAt) {
     s.status = 'EXPIRED';
     s.closeTime = Date.now();
     if (!s.entryHitTime) s.result = 'EXPIRED_NO_ENTRY';
@@ -1259,20 +1380,23 @@ function renderScanRow(r) {
   const displaySide = isBlocked ? 'BLOCKED' : r.side;
   const cls = isBlocked ? 'blocked' : r.side === 'LONG' ? 'long' : r.side === 'SHORT' ? 'short' : 'wait';
   const scoreCls = isBlocked ? 'warn' : r.score >= minScore ? 'good' : r.score >= 55 ? 'warn' : 'bad';
+  const levelInfo = classifySignalLevel(r);
+  const rsClass = (r.rs1h || 0) >= 0 ? 'rspos' : 'rsneg';
   return `<tr>
     <td><a class="symbol-link" href="${binanceFuturesUrl(r.symbol)}" target="_blank" rel="noopener noreferrer">${r.symbol}</a><br><span class="muted">Vol ${fmt(r.quoteVolume/1e6,1)}M · 24h ${fmt(r.change,2)}%</span></td>
-    <td><span class="tag ${cls}">${displaySide}</span></td>
-    <td><span class="score ${scoreCls}">${r.score}</span><br><span class="muted">Stable ${r.stability}/100</span></td>
+    <td><span class="tag ${cls}">${displaySide}</span><br><span class="level ${levelInfo.cls}">${levelInfo.level}</span><br><span class="muted">${levelInfo.action}</span></td>
+    <td><span class="score ${scoreCls}">${r.adjustedScore ?? r.score}</span><br><span class="muted">Stable ${r.stability}/100</span><br><span class="${rsClass}">RS 1h ${fmt(r.rs1h || 0,2)}%</span><br><span class="muted">RS 4h ${fmt(r.rs4h || 0,2)}%</span><br><span class="muted">Plan ${(r.planQuality || tradePlanQuality(r)).grade}</span></td>
     <td>Giá: <b>${fmt(r.price,6)}</b><br>Entry nghiên cứu: <b>${fmt(r.entry,6)}</b></td>
     <td>${r.side === 'WAIT' ? '<span class="muted">Chưa đủ điều kiện</span>' : `SL: <b>${fmt(r.sl,6)}</b><br>TP1: <b>${fmt(r.tp1,6)}</b><br>TP2: <b>${fmt(r.tp2,6)}</b><br>RR: <b>${fmt(r.rr,2)}</b>`}</td>
-    <td><span class="pill">RSI ${fmt(r.rsi,1)}</span><span class="pill">ADX ${fmt(r.adx,1)}</span><span class="pill">EMA20 ${fmt(r.ema20,6)}</span><span class="pill">EMA50 ${fmt(r.ema50,6)}</span><span class="pill">VWAP ${fmt(r.vwap,6)}</span></td>
-    <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}${r.learningWarning ? '<br><span class="warn">Learning: ' + r.learningWarning + '</span>' : ''}${r.qualityBlocked ? '<div class="blocked-reason"><b>Blocked reason:</b><br>• ' + r.qualityBlocked.join('<br>• ') + '</div>' : ''}</td>
+    <td><span class="pill">RSI ${fmt(r.rsi,1)}</span><span class="pill">ADX ${fmt(r.adx,1)}</span><span class="pill">EMA20 ${fmt(r.ema20,6)}</span><span class="pill">EMA50 ${fmt(r.ema50,6)}</span><span class="pill">VWAP ${fmt(r.vwap,6)}</span><span class="pill">RS1h ${fmt(r.rs1h || 0,2)}%</span></td>
+    <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}<br><span class="muted">Plan: ${(r.planQuality || tradePlanQuality(r)).entryQuality} entry · ${(r.planQuality || tradePlanQuality(r)).slQuality} SL · ${(r.planQuality || tradePlanQuality(r)).tpQuality} TP</span>${r.learningWarning ? '<br><span class="warn">Learning: ' + r.learningWarning + '</span>' : ''}${r.qualityBlocked ? '<div class="blocked-reason"><b>Blocked reason:</b><br>• ' + r.qualityBlocked.join('<br>• ') + '</div>' : ''}</td>
   </tr>`;
 }
 
 function statusClass(st) {
   if (st === 'TP2_WIN' || st === 'WIN') return 'win';
   if (st === 'TP1_HIT' || st === 'TP1_ONLY') return 'tp1';
+  if (st === 'WEAK_AFTER_ENTRY') return 'warn';
   if (st === 'LOSS') return 'loss';
   if (st === 'EXPIRED' || st === 'CANCELLED') return 'expired';
   if (st === 'OPEN') return 'open';
@@ -1282,7 +1406,7 @@ function renderLog() {
   const signals = loadSignals();
   $('logBody').innerHTML = signals.map(s => `
     <tr>
-      <td><a class="symbol-link" href="${binanceFuturesUrl(s.symbol)}" target="_blank" rel="noopener noreferrer">${s.symbol}</a><br><a class="id signal-link" href="${binanceFuturesUrl(s.symbol)}" target="_blank" rel="noopener noreferrer">${s.id}</a><br><span class="muted">Score ${s.score} · Stable ${s.stability}</span></td>
+      <td><a class="symbol-link" href="${binanceFuturesUrl(s.symbol)}" target="_blank" rel="noopener noreferrer">${s.symbol}</a><br><a class="id signal-link" href="${binanceFuturesUrl(s.symbol)}" target="_blank" rel="noopener noreferrer">${s.id}</a><br><span class="muted">Score ${s.score} · Stable ${s.stability}</span><br><span class="level ${(s.signalLevel || 'VALID').toLowerCase()}">${s.signalLevel || 'VALID'}</span><br><span class="muted">RS1h ${fmt(s.rs1h || 0,2)}% · RS4h ${fmt(s.rs4h || 0,2)}%</span><br><span class="muted">Batch ${s.batchId || '-'}</span></td>
       <td><span class="tag ${s.side === 'LONG' ? 'long' : 'short'}">${s.side}</span></td>
       <td><span class="tag ${statusClass(s.status)}">${s.status}</span><br><span class="muted">${s.result || ''}</span></td>
       <td>Entry <b>${fmt(s.entry,6)}</b><br>SL <b>${fmt(s.sl,6)}</b><br>TP1 <b>${fmt(s.tp1,6)}</b><br>TP2 <b>${fmt(s.tp2,6)}</b></td>
@@ -1299,29 +1423,74 @@ function renderLog() {
 function cancelSignal(id) {
   const signals = loadSignals().map(s => s.id === id ? {...s, status:'CANCELLED', result:'MANUAL_CANCELLED', closeTime: Date.now()} : s);
   saveSignals(signals);
-  renderLog(); renderStats();
+  renderLog(); renderStats(); updateMetrics(lastScanRows);
+}
+function createNewBatch() {
+  const base = ($('batchName')?.value || 'v4.5-safe').trim() || 'v4.5-safe';
+  const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+  const name = `${base}-${stamp}`;
+  setCurrentBatch(name);
+  saveConfigLocal();
+  setStatus(`Đã tạo batch mới: ${name}. Signal mới từ giờ sẽ lưu batchId này.`);
+}
+function summarizeCurrentBatch() {
+  const batch = getCurrentBatch();
+  const arr = loadSignals().filter(s => (s.batchId || 'NO_BATCH') === batch);
+  const closed = arr.filter(s => isClosedResultStatus(s.status));
+  const rates = calcLearningRates(closed);
+  const open = arr.filter(s => ['NEW','OPEN','TP1_HIT'].includes(s.status)).length;
+  const msg = `Batch ${batch}: tổng ${arr.length}, active ${open}, closed ${closed.length}, TP2 ${rates.tp2}, TP1 only ${rates.tp1Only}, Loss ${rates.loss}, Weak ${rates.weak || 0}, TP2 rate ${fmt(rates.fullWinRate,1)}%, Reaction ${fmt(rates.reactionRate,1)}%, Loss ${fmt(rates.lossRate,1)}%, Weak ${fmt(rates.weakRate || 0,1)}%.`;
+  setStatus(msg);
+  showTab('stats');
+  renderStats();
 }
 
 function renderStats() {
   const done = loadSignals().filter(s => isClosedResultStatus(s.status));
   const groups = new Map();
+  const addGroup = (key, s) => {
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  };
+  const rsBucket = (v) => {
+    const n = Number(v || 0);
+    if (n >= 1) return 'mạnh hơn BTC >= +1%';
+    if (n >= 0) return 'hơi mạnh hơn BTC 0~1%';
+    if (n <= -1) return 'yếu hơn BTC <= -1%';
+    return 'hơi yếu hơn BTC 0~-1%';
+  };
   for (const s of done) {
-    const keys = [`SYMBOL ${s.symbol}`, `SIDE ${s.side}`, `TF ${s.interval}`, `SCORE ${Math.floor(s.score/10)*10}+`];
-    for (const k of keys) {
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push(s);
-    }
+    addGroup(`LEVEL ${s.signalLevel || 'LEGACY'}`, s);
+    addGroup(`RS1H ${rsBucket(s.rs1h)}`, s);
+    addGroup(`RS4H ${rsBucket(s.rs4h)}`, s);
+    addGroup(`BATCH ${s.batchId || 'NO_BATCH'}`, s);
+    addGroup(`PLAN ${(s.planQuality && s.planQuality.grade) || 'UNKNOWN'}`, s);
+    addGroup(`SYMBOL ${s.symbol}`, s);
+    addGroup(`SIDE ${s.side}`, s);
+    addGroup(`TF ${s.interval}`, s);
+    addGroup(`SCORE ${Math.floor((s.score || 0)/10)*10}+`, s);
   }
+  const priority = (k) => {
+    if (k.startsWith('LEVEL')) return 1;
+    if (k.startsWith('RS')) return 2;
+    if (k.startsWith('BATCH')) return 3;
+    if (k.startsWith('PLAN')) return 4;
+    if (k.startsWith('SYMBOL')) return 5;
+    if (k.startsWith('SIDE')) return 6;
+    return 9;
+  };
   const rows = Array.from(groups.entries()).map(([k, arr]) => {
     const tp2 = arr.filter(s=>isFullWinStatus(s.status)).length;
     const tp1Only = arr.filter(s=>isTp1OnlyStatus(s.status)).length;
     const loss = arr.filter(s=>isLossStatus(s.status)).length;
-    const tp1Reach = arr.filter(s=>s.tp1HitTime).length;
+    const weak = arr.filter(s=>isWeakStatus(s.status)).length;
+    const tp1Reach = arr.filter(s=>s.tp1HitTime || isFullWinStatus(s.status) || isTp1OnlyStatus(s.status)).length;
     const tp2Rate = arr.length ? tp2/arr.length*100 : 0;
     const reactionRate = arr.length ? tp1Reach/arr.length*100 : 0;
     const lossRate = arr.length ? loss/arr.length*100 : 0;
-    return { k, total: arr.length, tp2, tp1Only, loss, tp1Reach, tp2Rate, reactionRate, lossRate };
-  }).sort((a,b)=>b.total-a.total || b.tp2Rate-a.tp2Rate).slice(0,80);
+    const weakRate = arr.length ? weak/arr.length*100 : 0;
+    return { k, total: arr.length, tp2, tp1Only, loss, weak, tp1Reach, tp2Rate, reactionRate, lossRate, weakRate };
+  }).sort((a,b)=>priority(a.k)-priority(b.k) || b.total-a.total || b.tp2Rate-a.tp2Rate).slice(0,120);
 
   $('statsBody').innerHTML = rows.map(r => `
     <tr>
@@ -1333,23 +1502,82 @@ function renderStats() {
       <td><b>${fmt(r.tp2Rate,1)}%</b></td>
       <td>${fmt(r.reactionRate,1)}%</td>
       <td class="bad">${fmt(r.lossRate,1)}%</td>
-      <td class="muted">Reaction = TP1 hoặc TP2. TP2 rate mới là full winrate; TP1 only dùng để tối ưu TP2/R:R.</td>
-    </tr>`).join('') || '<tr><td colspan="7" class="muted">Chưa có lệnh TP2/TP1/Loss để thống kê.</td></tr>';
+      <td class="warn">${fmt(r.weakRate || 0,1)}%</td>
+      <td class="muted">Dùng để so sánh Level, RS vs BTC, Batch, Plan và symbol/side. TP2 rate = full winrate; Reaction = TP1 hoặc TP2; Weak = entry không đủ lực.</td>
+    </tr>`).join('') || '<tr><td colspan="10" class="muted">Chưa có lệnh TP2/TP1/Loss/Weak để thống kê.</td></tr>';
+}
+
+function pctChangeFrom(kl, candlesBack) {
+  if (!kl || kl.length <= candlesBack) return 0;
+  const now = kl.at(-1).close;
+  const past = kl[kl.length - 1 - candlesBack].close;
+  return (now - past) / Math.max(past, 1e-12) * 100;
+}
+function updateMarketDashboard() {
+  const mode = lastBtcTrend.mode || 'UNKNOWN';
+  const adx = Number(lastBtcTrend.adx || 0);
+  let bias = 'WAIT';
+  if (mode === 'BTC_BULL') bias = 'Ưu tiên LONG';
+  else if (mode === 'BTC_BEAR') bias = 'Ưu tiên SHORT';
+  else if (mode === 'BTC_NEUTRAL') bias = 'Chọn lọc mạnh';
+  if ($('mRegime')) $('mRegime').textContent = mode;
+  if ($('mBtcAdx')) $('mBtcAdx').textContent = adx ? fmt(adx,1) : '-';
+  if ($('mBias')) $('mBias').textContent = bias;
+  if ($('mRsFilter')) $('mRsFilter').textContent = `BTC 1h ${fmt(lastBtcTrend.change1h || 0,2)}% · 4h ${fmt(lastBtcTrend.change4h || 0,2)}%`;
+  if ($('mApiHealth')) $('mApiHealth').textContent = `${apiHealth.status}${apiHealth.lastOk ? ' · ' + new Date(apiHealth.lastOk).toLocaleTimeString('vi-VN') : ''}`;
+  if ($('mBatch')) $('mBatch').textContent = getCurrentBatch();
+}
+function tradePlanQuality(r) {
+  const entryDist = Math.abs((r.price || r.entry) - r.entry) / Math.max(r.entry, 1e-12) * 100;
+  const emaDist = Math.abs(r.entry - r.ema20) / Math.max(r.entry, 1e-12) * 100;
+  const vwapDist = Math.abs(r.entry - r.vwap) / Math.max(r.entry, 1e-12) * 100;
+  let entryQuality = 'B';
+  if (emaDist <= 0.35 && vwapDist <= 0.8 && entryDist <= 0.4) entryQuality = 'A';
+  if (emaDist > 0.9 || vwapDist > 1.5 || entryDist > 1.0) entryQuality = 'C';
+  let slQuality = 'GOOD';
+  const riskPct = Math.abs(r.entry - r.sl) / Math.max(r.entry, 1e-12) * 100;
+  if (riskPct < 0.35) slQuality = 'TIGHT';
+  if (riskPct > 3.5) slQuality = 'WIDE';
+  let tpQuality = 'REALISTIC';
+  if ((r.tpResistanceDistPct !== undefined && r.tpResistanceDistPct < 0.25) || (r.tpSupportDistPct !== undefined && r.tpSupportDistPct < 0.25)) tpQuality = 'NEAR_SR';
+  if (r.rr > 1.8) tpQuality = 'AGGRESSIVE';
+  const grade = entryQuality === 'A' && slQuality === 'GOOD' && tpQuality === 'REALISTIC' ? 'A' : entryQuality === 'C' || slQuality !== 'GOOD' || tpQuality !== 'REALISTIC' ? 'C' : 'B';
+  return { grade, entryQuality, slQuality, tpQuality, riskPct };
+}
+function classifySignalLevel(r) {
+  const minScore = +$('minScore').value;
+  const blocked = Boolean(r.qualityBlocked && r.qualityBlocked.length);
+  if (blocked) return { level: 'AVOID', cls: 'avoid', action: 'AVOID' };
+  if (r.side === 'WAIT') return { level: 'WATCHLIST', cls: 'watchlist', action: 'WATCH ONLY' };
+  const score = r.adjustedScore ?? r.score ?? 0;
+  const plan = r.planQuality || tradePlanQuality(r);
+  const rsOk = r.side === 'LONG' ? (r.rs1h >= 0 || r.rs4h >= 0) : (r.rs1h <= 0 || r.rs4h <= 0);
+  const btcOk = r.side === 'LONG' ? lastBtcTrend.longOk : r.side === 'SHORT' ? lastBtcTrend.shortOk : false;
+  const premium = score >= 85 && r.stability >= 68 && r.adx >= 25 && r.setupType === 'TREND_PULLBACK' && rsOk && btcOk && plan.grade !== 'C';
+  const valid = score >= minScore && r.stability >= +$('qMinStable').value && r.adx >= +$('qMinAdx').value && plan.grade !== 'C';
+  if (premium) return { level: 'PREMIUM', cls: 'premium', action: 'CHECK BINANCE' };
+  if (valid) return { level: 'VALID', cls: 'valid', action: 'FORWARD TEST' };
+  return { level: 'WATCHLIST', cls: 'watchlist', action: 'WATCH ONLY' };
+}
+function activeCountFor(symbol, side) {
+  return loadSignals().filter(s => s.symbol === symbol && s.side === side && ['NEW','OPEN','TP1_HIT'].includes(s.status)).length;
 }
 
 function updateMetrics(rows=[]) {
   const signals = loadSignals();
   const newSig = signals.filter(s=>s.status==='NEW').length;
-  const open = signals.filter(s=>['NEW','OPEN'].includes(s.status)).length;
+  const open = signals.filter(s=>['NEW','OPEN','TP1_HIT'].includes(s.status)).length;
   const tp2 = signals.filter(s=>isFullWinStatus(s.status)).length;
   const tp1Only = signals.filter(s=>isTp1OnlyStatus(s.status)).length;
   const loss = signals.filter(s=>isLossStatus(s.status)).length;
+  const weak = signals.filter(s=>isWeakStatus(s.status)).length;
   $('mScanned').textContent = rows.length || lastScanRows.length || 0;
   $('mNew').textContent = newSig;
   $('mOpen').textContent = open;
-  $('mWL').textContent = `${tp2} / ${tp1Only} / ${loss}`;
+  $('mWL').textContent = `${tp2} / ${tp1Only} / ${loss}${weak ? ' / W' + weak : ''}`;
   $('mSide').textContent = `${signals.filter(r=>r.side==='LONG').length} / ${signals.filter(r=>r.side==='SHORT').length}`;
   $('mTime').textContent = new Date().toLocaleTimeString('vi-VN');
+  updateMarketDashboard();
 }
 
 function showTab(name) {
@@ -1455,7 +1683,7 @@ $('quickSignalMode').addEventListener('change', () => {
 $('qSignalMode').addEventListener('change', () => {
   $('quickSignalMode').value = $('qSignalMode').value;
 });
-['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode'].forEach(id => {
+['interval','trackInterval','topN','scanSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','batchName'].forEach(id => {
   const el = $(id);
   if (el) el.addEventListener('change', () => saveConfigLocal());
 });
@@ -1479,8 +1707,11 @@ $('supaPushBtn').onclick = pushToSupabase;
 $('supaPushBtnSide').onclick = pushToSupabase;
 $('configPushBtn').onclick = pushConfigToSupabase;
 $('configPullBtn').onclick = pullConfigFromSupabase;
+$('newBatchBtn').onclick = createNewBatch;
+$('batchSummaryBtn').onclick = summarizeCurrentBatch;
 
 applyConfig(loadConfigLocal());
+if ($('batchName')) $('batchName').value = getCurrentBatch();
 if ($('quickSignalMode') && $('qSignalMode')) $('quickSignalMode').value = $('qSignalMode').value;
 initProxyFromSettings();
 initSupabaseFromSettings();
