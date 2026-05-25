@@ -206,6 +206,8 @@
         <button id="autoBtn" class="secondary">Bật auto scan</button>
         <button id="forwardBtn" class="secondary">Forward-test log</button>
         <button id="exportBtn" class="secondary">Export log JSON</button>
+        <button id="importBtn" class="secondary">Import log JSON</button>
+        <input id="importFile" type="file" accept="application/json,.json" style="display:none" />
         <button id="clearBtn" class="danger">Xóa log local</button>
         <div style="height:1px;background:var(--border);margin:4px 0;"></div>
         <label>Binance Proxy URL - Cloudflare Worker
@@ -308,7 +310,8 @@
             <th>TP1 only</th>
             <th>Loss</th>
             <th>TP2 rate</th>
-            <th>TP1 reach</th>
+            <th>Reaction rate</th>
+            <th>Loss rate</th>
             <th>Ghi chú</th>
           </tr>
           </thead>
@@ -662,12 +665,29 @@ function isFullWinStatus(status) { return ['TP2_WIN','WIN'].includes(status); }
 function isTp1OnlyStatus(status) { return ['TP1_ONLY'].includes(status); }
 function isLossStatus(status) { return status === 'LOSS'; }
 function isClosedResultStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN'].includes(status); }
+function calcLearningRates(arr) {
+  const total = arr.length;
+  const tp2 = arr.filter(s => isFullWinStatus(s.status)).length;
+  const tp1Only = arr.filter(s => isTp1OnlyStatus(s.status)).length;
+  const loss = arr.filter(s => isLossStatus(s.status)).length;
+  const fullWinRate = total ? tp2 / total * 100 : 100;
+  const reactionRate = total ? (tp2 + tp1Only) / total * 100 : 100;
+  const lossRate = total ? loss / total * 100 : 0;
+  return { total, tp2, tp1Only, loss, fullWinRate, reactionRate, lossRate };
+}
 function recentStatsForGate(r) {
   const closed = loadSignals().filter(s => isClosedResultStatus(s.status));
-  const sameSymbol = closed.filter(s => s.symbol === r.symbol).slice(0, 8);
-  const sameSide = closed.filter(s => s.side === r.side).slice(0, 20);
-  const qualityRate = arr => arr.length ? arr.filter(s => isFullWinStatus(s.status) || isTp1OnlyStatus(s.status)).length / arr.length * 100 : 100;
-  return { symbolN: sameSymbol.length, symbolWr: qualityRate(sameSymbol), sideN: sameSide.length, sideWr: qualityRate(sameSide) };
+  const sameSymbol = closed.filter(s => s.symbol === r.symbol).slice(0, 10);
+  const sameSide = closed.filter(s => s.side === r.side).slice(0, 25);
+  const sameSetup = closed.filter(s => s.side === r.side && s.setupType === r.setupType).slice(0, 25);
+  return {
+    symbolN: sameSymbol.length,
+    symbol: calcLearningRates(sameSymbol),
+    sideN: sameSide.length,
+    side: calcLearningRates(sameSide),
+    setupN: sameSetup.length,
+    setup: calcLearningRates(sameSetup)
+  };
 }
 function qualityGate(r) {
   const minStable = +$('qMinStable').value;
@@ -708,8 +728,25 @@ function qualityGate(r) {
 
   if ($('qLearningFilter').value === 'ON') {
     const st = recentStatsForGate(r);
-    if (st.symbolN >= 3 && st.symbolWr < 25) blocks.push(`${r.symbol} đang thua nhiều: ${fmt(st.symbolWr,0)}%/${st.symbolN} mẫu`);
-    if (st.sideN >= 8 && st.sideWr < 30) blocks.push(`${r.side} đang thua nhiều: ${fmt(st.sideWr,0)}%/${st.sideN} mẫu`);
+
+    // Reaction Rate thấp = entry/tín hiệu sai hướng nhiều, nên chặn.
+    if (st.symbolN >= 4 && st.symbol.reactionRate < 25) {
+      blocks.push(`${r.symbol} reaction thấp: ${fmt(st.symbol.reactionRate,0)}%/${st.symbolN} mẫu`);
+    }
+    if (st.sideN >= 10 && st.side.reactionRate < 28) {
+      blocks.push(`${r.side} reaction thấp: ${fmt(st.side.reactionRate,0)}%/${st.sideN} mẫu`);
+    }
+    if (st.setupN >= 10 && st.setup.reactionRate < 28) {
+      blocks.push(`${r.setupType} ${r.side} reaction thấp: ${fmt(st.setup.reactionRate,0)}%/${st.setupN} mẫu`);
+    }
+
+    // Reaction ổn nhưng TP2 thấp = hướng có phản ứng, không chặn, nhưng cảnh báo TP2/R:R.
+    if (st.symbolN >= 4 && st.symbol.reactionRate >= 45 && st.symbol.fullWinRate < 15) {
+      r.learningWarning = `${r.symbol}: reaction ${fmt(st.symbol.reactionRate,0)}% nhưng TP2 ${fmt(st.symbol.fullWinRate,0)}% → nên xem lại TP2/R:R`;
+    }
+    if (st.setupN >= 10 && st.setup.reactionRate >= 45 && st.setup.fullWinRate < 15) {
+      r.learningWarning = `${r.setupType} ${r.side}: reaction ${fmt(st.setup.reactionRate,0)}% nhưng TP2 ${fmt(st.setup.fullWinRate,0)}% → TP2 có thể đang xa`;
+    }
   }
 
   let penalty = 0;
@@ -1076,7 +1113,7 @@ function renderScan(rows) {
       <td>Giá: <b>${fmt(r.price,6)}</b><br>Entry nghiên cứu: <b>${fmt(r.entry,6)}</b></td>
       <td>${r.side === 'WAIT' ? '<span class="muted">Chưa đủ điều kiện</span>' : `SL: <b>${fmt(r.sl,6)}</b><br>TP1: <b>${fmt(r.tp1,6)}</b><br>TP2: <b>${fmt(r.tp2,6)}</b><br>RR: <b>${fmt(r.rr,2)}</b>`}</td>
       <td><span class="pill">RSI ${fmt(r.rsi,1)}</span><span class="pill">ADX ${fmt(r.adx,1)}</span><span class="pill">EMA20 ${fmt(r.ema20,6)}</span><span class="pill">EMA50 ${fmt(r.ema50,6)}</span><span class="pill">VWAP ${fmt(r.vwap,6)}</span></td>
-      <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}${r.qualityBlocked ? '<br><span class="bad">Gate chặn: ' + r.qualityBlocked.join(' · ') + '</span>' : ''}</td>
+      <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}${r.learningWarning ? '<br><span class="warn">Learning: ' + r.learningWarning + '</span>' : ''}${r.qualityBlocked ? '<br><span class="bad">Gate chặn: ' + r.qualityBlocked.join(' · ') + '</span>' : ''}</td>
     </tr>`;
   }).join('');
   updateMetrics(rows);
@@ -1130,7 +1167,9 @@ function renderStats() {
     const loss = arr.filter(s=>isLossStatus(s.status)).length;
     const tp1Reach = arr.filter(s=>s.tp1HitTime).length;
     const tp2Rate = arr.length ? tp2/arr.length*100 : 0;
-    return { k, total: arr.length, tp2, tp1Only, loss, tp1Reach, tp2Rate };
+    const reactionRate = arr.length ? tp1Reach/arr.length*100 : 0;
+    const lossRate = arr.length ? loss/arr.length*100 : 0;
+    return { k, total: arr.length, tp2, tp1Only, loss, tp1Reach, tp2Rate, reactionRate, lossRate };
   }).sort((a,b)=>b.total-a.total || b.tp2Rate-a.tp2Rate).slice(0,80);
 
   $('statsBody').innerHTML = rows.map(r => `
@@ -1141,8 +1180,9 @@ function renderStats() {
       <td class="warn">${r.tp1Only}</td>
       <td class="bad">${r.loss}</td>
       <td><b>${fmt(r.tp2Rate,1)}%</b></td>
-      <td>${fmt(r.tp1Reach / Math.max(1,r.total) * 100,1)}%</td>
-      <td class="muted">TP1 only không tính là win; dùng để tối ưu TP1/TP2/R:R.</td>
+      <td>${fmt(r.reactionRate,1)}%</td>
+      <td class="bad">${fmt(r.lossRate,1)}%</td>
+      <td class="muted">Reaction = TP1 hoặc TP2. TP2 rate mới là full winrate; TP1 only dùng để tối ưu TP2/R:R.</td>
     </tr>`).join('') || '<tr><td colspan="7" class="muted">Chưa có lệnh TP2/TP1/Loss để thống kê.</td></tr>';
 }
 
@@ -1189,6 +1229,43 @@ $('exportBtn').onclick = () => {
   a.href = URL.createObjectURL(blob);
   a.download = `forward-test-log-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
+};
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed.signals) ? parsed.signals : [];
+    if (!incoming.length) throw new Error('File JSON không có danh sách signals hợp lệ.');
+    const local = loadSignals();
+    const map = new Map(local.map(s => [s.id, s]));
+    let added = 0, updated = 0;
+    for (const sig of incoming) {
+      if (!sig || !sig.id) continue;
+      const cur = map.get(sig.id);
+      if (!cur) {
+        map.set(sig.id, sig);
+        added++;
+      } else {
+        const curTime = Date.parse(cur.lastCheckedAt || cur.closeTime || cur.createdAt || 0) || 0;
+        const incTime = Date.parse(sig.lastCheckedAt || sig.closeTime || sig.createdAt || 0) || 0;
+        if (incTime >= curTime) {
+          map.set(sig.id, { ...cur, ...sig });
+          updated++;
+        }
+      }
+    }
+    const merged = Array.from(map.values()).sort((a,b)=>(b.signalTime||0)-(a.signalTime||0)).slice(0, 1000);
+    saveSignals(merged);
+    renderLog(); renderStats(); updateMetrics(lastScanRows);
+    setStatus(`Import JSON xong: thêm ${added}, cập nhật ${updated}, tổng ${merged.length} signals. ${supabaseSession ? 'Có thể bấm Push local để đưa lên cloud.' : ''}`);
+  } catch (e) {
+    setStatus('Import JSON lỗi: ' + e.message);
+  } finally {
+    event.target.value = '';
+  }
 };
 $('clearBtn').onclick = () => {
   if (confirm('Xóa toàn bộ forward-test log trên trình duyệt này?')) {
