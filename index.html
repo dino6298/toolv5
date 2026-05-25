@@ -67,6 +67,15 @@
     .tabs { display:flex; gap:8px; margin-bottom: 12px; }
     .tabs button { width:auto; padding: 9px 14px; background: #0b1220; border:1px solid var(--border); }
     .tabs button.active { background: linear-gradient(135deg, #2862ff, #7c3cff); border: 0; }
+    .scan-split { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    .scan-panel { border: 1px solid var(--border); border-radius: 18px; background: rgba(11,18,32,.72); overflow: hidden; }
+    .scan-panel.good-panel { border-color: rgba(32,212,137,.45); }
+    .scan-panel.blocked-panel { border-color: rgba(255,92,122,.45); }
+    .scan-panel-head { display:flex; align-items:center; justify-content:space-between; gap: 10px; padding: 13px 15px; border-bottom: 1px solid var(--border); background: rgba(20,31,49,.8); }
+    .scan-panel-head h3 { margin: 0; font-size: 15px; }
+    .mini-count { display:inline-flex; min-width: 34px; justify-content:center; padding: 4px 10px; border-radius: 999px; background:#0b1220; color: var(--text); font-weight: 900; font-size: 12px; }
+    .empty { padding: 18px; color: var(--muted); font-size: 13px; }
+    @media (min-width: 1280px) { .scan-split { grid-template-columns: 1.08fr .92fr; } }
     .hidden { display:none; }
     .smallbtn { width:auto; padding: 6px 9px; border-radius: 10px; font-size: 12px; }
     .id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); word-break: break-all; }
@@ -124,7 +133,7 @@
             <input id="dupMin" type="number" min="15" max="1440" value="180" />
           </label>
           <label>Hết hạn tín hiệu, giờ
-            <input id="expireHours" type="number" min="1" max="72" value="12" />
+            <input id="expireHours" type="number" min="1" max="72" value="4" />
           </label>
         </div>
         <div class="row">
@@ -267,20 +276,22 @@
       </div>
 
       <div id="scanView" class="card tablebox">
-        <table>
-          <thead>
-          <tr>
-            <th>Symbol</th>
-            <th>Tín hiệu</th>
-            <th>Điểm</th>
-            <th>Giá / Entry</th>
-            <th>SL / TP</th>
-            <th>Chỉ báo chính</th>
-            <th>Lý do</th>
-          </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
+        <div class="scan-split">
+          <section class="scan-panel good-panel">
+            <div class="scan-panel-head">
+              <h3>Tín hiệu khả quan</h3>
+              <span id="goodCount" class="mini-count">0</span>
+            </div>
+            <div id="goodSignalsWrap"></div>
+          </section>
+          <section class="scan-panel blocked-panel">
+            <div class="scan-panel-head">
+              <h3>Tín hiệu Blocked</h3>
+              <span id="blockedCount" class="mini-count">0</span>
+            </div>
+            <div id="blockedSignalsWrap"></div>
+          </section>
+        </div>
       </div>
 
       <div id="logView" class="card tablebox hidden">
@@ -431,9 +442,9 @@ async function pullConfigFromSupabase() {
 }
 function applyQualityPreset(preset = $('qualityPreset')?.value || 'SAFE') {
   const sets = {
-    SAFE: { minScore:75, topN:25, scanSec:180, minVol:50000000, dupMin:240, expireHours:8, qMinStable:70, qMinAdx:25, qMinRr:1.4, qMaxEmaDist:0.8, qMaxVwapDist:1.2, qLongRsi:'45-68', qShortRsi:'32-55', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
-    BALANCED: { minScore:72, topN:35, scanSec:150, minVol:30000000, dupMin:180, expireHours:10, qMinStable:66, qMinAdx:22, qMinRr:1.3, qMaxEmaDist:1.0, qMaxVwapDist:1.5, qLongRsi:'43-70', qShortRsi:'30-57', qBtcFilter:'MEDIUM', qSignalMode:'TREND_AND_BREAKOUT', qLearningFilter:'ON' },
-    AGGRESSIVE: { minScore:68, topN:50, scanSec:120, minVol:20000000, dupMin:120, expireHours:12, qMinStable:60, qMinAdx:18, qMinRr:1.15, qMaxEmaDist:1.4, qMaxVwapDist:2.0, qLongRsi:'40-72', qShortRsi:'28-60', qBtcFilter:'SOFT', qSignalMode:'ALL', qLearningFilter:'OFF' }
+    SAFE: { minScore:75, topN:25, scanSec:180, minVol:50000000, dupMin:240, expireHours:4, qMinStable:70, qMinAdx:25, qMinRr:1.4, qMaxEmaDist:0.8, qMaxVwapDist:1.2, qLongRsi:'45-68', qShortRsi:'32-55', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK', qLearningFilter:'ON' },
+    BALANCED: { minScore:72, topN:35, scanSec:150, minVol:30000000, dupMin:180, expireHours:4, qMinStable:66, qMinAdx:22, qMinRr:1.3, qMaxEmaDist:1.0, qMaxVwapDist:1.5, qLongRsi:'43-70', qShortRsi:'30-57', qBtcFilter:'MEDIUM', qSignalMode:'TREND_AND_BREAKOUT', qLearningFilter:'ON' },
+    AGGRESSIVE: { minScore:68, topN:50, scanSec:120, minVol:20000000, dupMin:120, expireHours:6, qMinStable:60, qMinAdx:18, qMinRr:1.15, qMaxEmaDist:1.4, qMaxVwapDist:2.0, qLongRsi:'40-72', qShortRsi:'28-60', qBtcFilter:'SOFT', qSignalMode:'ALL', qLearningFilter:'OFF' }
   };
   applyConfig(sets[preset] || sets.SAFE);
   saveConfigLocal();
@@ -989,15 +1000,19 @@ async function forwardTestOne(s) {
   const kl = parseKlines(rows);
   const expireAt = s.signalTime + (+$('expireHours').value * 60 * 60 * 1000);
   let entered = Boolean(s.entryHitTime);
+  let expiredByTime = false;
   let maxFav = s.mfe || 0;
   let maxAdv = s.mae || 0;
 
   for (const k of kl) {
     if (k.time < s.signalTime) continue;
-    if (k.time > expireAt && !entered) {
+    if (k.time > expireAt && !['TP2_WIN','TP1_ONLY','LOSS','WIN','EXPIRED','CANCELLED'].includes(s.status)) {
+      expiredByTime = true;
       s.status = 'EXPIRED';
       s.closeTime = k.time;
-      s.result = 'NO_ENTRY_EXPIRED';
+      if (!entered) s.result = 'EXPIRED_NO_ENTRY';
+      else if (s.tp1HitTime) s.result = 'EXPIRED_AFTER_TP1_NO_TP2';
+      else s.result = 'EXPIRED_AFTER_ENTRY_NO_TP1';
       break;
     }
 
@@ -1053,6 +1068,13 @@ async function forwardTestOne(s) {
   }
   s.mfe = maxFav;
   s.mae = maxAdv;
+  if (!expiredByTime && !['TP2_WIN','TP1_ONLY','LOSS','WIN','EXPIRED','CANCELLED'].includes(s.status) && Date.now() > expireAt) {
+    s.status = 'EXPIRED';
+    s.closeTime = Date.now();
+    if (!s.entryHitTime) s.result = 'EXPIRED_NO_ENTRY';
+    else if (s.tp1HitTime) s.result = 'EXPIRED_AFTER_TP1_NO_TP2';
+    else s.result = 'EXPIRED_AFTER_ENTRY_NO_TP1';
+  }
   s.lastCheckedAt = new Date().toISOString();
   return s;
 }
@@ -1091,32 +1113,62 @@ async function forwardTestAll() {
 }
 
 function renderScan(rows) {
-  const minScore = +$('minScore').value;
   const sideFilter = $('sideFilter').value;
   const sortBy = $('sortBy').value;
   let data = rows.filter(r => sideFilter === 'ALL' || r.side === sideFilter);
+
   data.sort((a,b) => {
-    if (sortBy === 'stability') return b.stability - a.stability;
-    if (sortBy === 'volume') return b.quoteVolume - a.quoteVolume;
-    if (sortBy === 'rr') return b.rr - a.rr;
-    return b.score - a.score;
+    if (sortBy === 'stability') return (b.stability || 0) - (a.stability || 0);
+    if (sortBy === 'volume') return (b.quoteVolume || 0) - (a.quoteVolume || 0);
+    if (sortBy === 'rr') return (b.rr || 0) - (a.rr || 0);
+    return (b.score || 0) - (a.score || 0);
   });
-  $('tbody').innerHTML = data.map(r => {
-    const isBlocked = Boolean(r.qualityBlocked && r.qualityBlocked.length);
-    const displaySide = isBlocked ? 'BLOCKED' : r.side;
-    const cls = isBlocked ? 'blocked' : r.side === 'LONG' ? 'long' : r.side === 'SHORT' ? 'short' : 'wait';
-    const scoreCls = isBlocked ? 'warn' : r.score >= minScore ? 'good' : r.score >= 55 ? 'warn' : 'bad';
-    return `<tr>
-      <td><a class="symbol-link" href="${binanceFuturesUrl(r.symbol)}" target="_blank" rel="noopener noreferrer">${r.symbol}</a><br><span class="muted">Vol ${fmt(r.quoteVolume/1e6,1)}M · 24h ${fmt(r.change,2)}%</span></td>
-      <td><span class="tag ${cls}">${displaySide}</span></td>
-      <td><span class="score ${scoreCls}">${r.score}</span><br><span class="muted">Stable ${r.stability}/100</span></td>
-      <td>Giá: <b>${fmt(r.price,6)}</b><br>Entry nghiên cứu: <b>${fmt(r.entry,6)}</b></td>
-      <td>${r.side === 'WAIT' ? '<span class="muted">Chưa đủ điều kiện</span>' : `SL: <b>${fmt(r.sl,6)}</b><br>TP1: <b>${fmt(r.tp1,6)}</b><br>TP2: <b>${fmt(r.tp2,6)}</b><br>RR: <b>${fmt(r.rr,2)}</b>`}</td>
-      <td><span class="pill">RSI ${fmt(r.rsi,1)}</span><span class="pill">ADX ${fmt(r.adx,1)}</span><span class="pill">EMA20 ${fmt(r.ema20,6)}</span><span class="pill">EMA50 ${fmt(r.ema50,6)}</span><span class="pill">VWAP ${fmt(r.vwap,6)}</span></td>
-      <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}${r.learningWarning ? '<br><span class="warn">Learning: ' + r.learningWarning + '</span>' : ''}${r.qualityBlocked ? '<br><span class="bad">Gate chặn: ' + r.qualityBlocked.join(' · ') + '</span>' : ''}</td>
-    </tr>`;
-  }).join('');
+
+  const goodSignals = data.filter(r => !(r.qualityBlocked && r.qualityBlocked.length));
+  const blockedSignals = data.filter(r => r.qualityBlocked && r.qualityBlocked.length);
+
+  $('goodCount').textContent = goodSignals.length;
+  $('blockedCount').textContent = blockedSignals.length;
+  $('goodSignalsWrap').innerHTML = renderScanTable(goodSignals, false);
+  $('blockedSignalsWrap').innerHTML = renderScanTable(blockedSignals, true);
   updateMetrics(rows);
+}
+
+function renderScanTable(rows, blockedTable=false) {
+  if (!rows.length) {
+    return `<div class="empty">${blockedTable ? 'Không có tín hiệu bị block.' : 'Chưa có tín hiệu khả quan.'}</div>`;
+  }
+  return `<table>
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Tín hiệu</th>
+        <th>Điểm</th>
+        <th>Giá / Entry</th>
+        <th>SL / TP</th>
+        <th>Chỉ báo chính</th>
+        <th>Lý do</th>
+      </tr>
+    </thead>
+    <tbody>${rows.map(renderScanRow).join('')}</tbody>
+  </table>`;
+}
+
+function renderScanRow(r) {
+  const minScore = +$('minScore').value;
+  const isBlocked = Boolean(r.qualityBlocked && r.qualityBlocked.length);
+  const displaySide = isBlocked ? 'BLOCKED' : r.side;
+  const cls = isBlocked ? 'blocked' : r.side === 'LONG' ? 'long' : r.side === 'SHORT' ? 'short' : 'wait';
+  const scoreCls = isBlocked ? 'warn' : r.score >= minScore ? 'good' : r.score >= 55 ? 'warn' : 'bad';
+  return `<tr>
+    <td><a class="symbol-link" href="${binanceFuturesUrl(r.symbol)}" target="_blank" rel="noopener noreferrer">${r.symbol}</a><br><span class="muted">Vol ${fmt(r.quoteVolume/1e6,1)}M · 24h ${fmt(r.change,2)}%</span></td>
+    <td><span class="tag ${cls}">${displaySide}</span></td>
+    <td><span class="score ${scoreCls}">${r.score}</span><br><span class="muted">Stable ${r.stability}/100</span></td>
+    <td>Giá: <b>${fmt(r.price,6)}</b><br>Entry nghiên cứu: <b>${fmt(r.entry,6)}</b></td>
+    <td>${r.side === 'WAIT' ? '<span class="muted">Chưa đủ điều kiện</span>' : `SL: <b>${fmt(r.sl,6)}</b><br>TP1: <b>${fmt(r.tp1,6)}</b><br>TP2: <b>${fmt(r.tp2,6)}</b><br>RR: <b>${fmt(r.rr,2)}</b>`}</td>
+    <td><span class="pill">RSI ${fmt(r.rsi,1)}</span><span class="pill">ADX ${fmt(r.adx,1)}</span><span class="pill">EMA20 ${fmt(r.ema20,6)}</span><span class="pill">EMA50 ${fmt(r.ema50,6)}</span><span class="pill">VWAP ${fmt(r.vwap,6)}</span></td>
+    <td class="detail">${r.reasons.map(x=>`• ${x}`).join('<br>')}${r.learningWarning ? '<br><span class="warn">Learning: ' + r.learningWarning + '</span>' : ''}${r.qualityBlocked ? '<br><span class="bad">Gate chặn: ' + r.qualityBlocked.join(' · ') + '</span>' : ''}</td>
+  </tr>`;
 }
 
 function statusClass(st) {
