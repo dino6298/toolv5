@@ -6,263 +6,54 @@
   <title>FTA Mobile Forward Log Viewer</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    :root {
-      --bg:#070b12; --card:#0e1624; --card2:#111c2e; --text:#eaf1ff; --muted:#8ea0bc;
-      --border:#243148; --good:#20d489; --warn:#ffd166; --bad:#ff5c7a; --blue:#7dd3fc;
-    }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+    :root { --bg:#070b12; --card:#0e1624; --card2:#111c2e; --text:#eaf1ff; --muted:#8ea0bc; --border:#243148; --good:#20d489; --warn:#ffd166; --bad:#ff5c7a; --blue:#7dd3fc; }
+    * { box-sizing:border-box; } body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
     .wrap { width:100%; max-width:760px; margin:0 auto; padding:12px; }
     .topbar { position:sticky; top:0; z-index:10; margin:-12px -12px 12px; padding:12px; background:rgba(7,11,18,.92); backdrop-filter:blur(16px); border-bottom:1px solid var(--border); }
-    h1 { margin:0 0 6px; font-size:20px; line-height:1.2; }
-    .sub { color:var(--muted); font-size:12px; line-height:1.35; }
+    h1 { margin:0 0 6px; font-size:20px; line-height:1.2; } .sub { color:var(--muted); font-size:12px; line-height:1.35; }
     .status { margin-top:10px; padding:10px 12px; border:1px solid var(--border); border-radius:14px; background:#0b1220; color:var(--muted); font-size:12px; }
-    .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-    .card { border:1px solid var(--border); background:var(--card); border-radius:18px; padding:12px; margin-bottom:10px; }
-    .mini { border:1px solid var(--border); background:var(--card2); border-radius:16px; padding:10px; }
-    .mini span { display:block; color:var(--muted); font-size:11px; margin-bottom:4px; }
-    .mini b { font-size:18px; }
-    label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; }
-    input, select, button { width:100%; border:1px solid var(--border); border-radius:14px; padding:11px 12px; background:#0b1220; color:var(--text); font-size:14px; }
-    button { background:linear-gradient(135deg,#2862ff,#7c3cff); border:0; font-weight:800; cursor:pointer; }
-    button.secondary { background:#152238; border:1px solid var(--border); }
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-    .tabs { display:flex; gap:8px; overflow:auto; padding-bottom:4px; }
-    .tabs button { white-space:nowrap; padding:10px 12px; font-size:12px; background:#152238; border:1px solid var(--border); }
-    .tabs button.active { background:linear-gradient(135deg,#2862ff,#7c3cff); border:0; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; } .card { border:1px solid var(--border); background:var(--card); border-radius:18px; padding:12px; margin-bottom:10px; }
+    .mini { border:1px solid var(--border); background:var(--card2); border-radius:16px; padding:10px; } .mini span { display:block; color:var(--muted); font-size:11px; margin-bottom:4px; } .mini b { font-size:18px; }
+    label { display:block; color:var(--muted); font-size:12px; margin:8px 0 4px; } input, select, button { width:100%; border:1px solid var(--border); border-radius:14px; padding:11px 12px; background:#0b1220; color:var(--text); font-size:14px; }
+    button { background:linear-gradient(135deg,#2862ff,#7c3cff); border:0; font-weight:800; cursor:pointer; } button.secondary { background:#152238; border:1px solid var(--border); }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; } .tabs { display:flex; gap:8px; overflow:auto; padding-bottom:4px; }
+    .tabs button { white-space:nowrap; padding:10px 12px; font-size:12px; background:#152238; border:1px solid var(--border); } .tabs button.active { background:linear-gradient(135deg,#2862ff,#7c3cff); border:0; }
     .signal { border:1px solid var(--border); background:var(--card); border-radius:18px; padding:12px; margin-bottom:10px; }
-    .sig-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
-    .symbol { font-size:18px; font-weight:900; color:var(--text); text-decoration:none; }
-    .id { display:block; color:var(--muted); font-size:10px; word-break:break-all; margin-top:4px; }
-    .tag { display:inline-flex; align-items:center; border-radius:999px; padding:4px 9px; font-size:11px; font-weight:900; }
-    .long { background:rgba(32,212,137,.14); color:var(--good); border:1px solid rgba(32,212,137,.35); }
-    .short { background:rgba(255,92,122,.14); color:var(--bad); border:1px solid rgba(255,92,122,.35); }
-    .statusTag { background:#18253c; color:var(--blue); border:1px solid var(--border); }
+    .sig-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; } .symbol { font-size:18px; font-weight:900; color:var(--text); text-decoration:none; } .id { display:block; color:var(--muted); font-size:10px; word-break:break-all; margin-top:4px; }
+    .tag { display:inline-flex; align-items:center; border-radius:999px; padding:4px 9px; font-size:11px; font-weight:900; } .long { background:rgba(32,212,137,.14); color:var(--good); border:1px solid rgba(32,212,137,.35); } .short { background:rgba(255,92,122,.14); color:var(--bad); border:1px solid rgba(255,92,122,.35); } .statusTag { background:#18253c; color:var(--blue); border:1px solid var(--border); }
     .win { color:var(--good); } .loss { color:var(--bad); } .warn { color:var(--warn); } .muted { color:var(--muted); }
-    .kv { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
-    .kv div { background:#0b1220; border:1px solid var(--border); border-radius:14px; padding:8px; }
-    .kv span { display:block; color:var(--muted); font-size:10px; margin-bottom:3px; }
-    .kv b { font-size:13px; }
-    .notes { margin-top:10px; color:var(--muted); font-size:12px; line-height:1.45; }
-    .empty { padding:20px; text-align:center; color:var(--muted); }
-    .hide { display:none; }
+    .kv { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; } .kv div { background:#0b1220; border:1px solid var(--border); border-radius:14px; padding:8px; } .kv span { display:block; color:var(--muted); font-size:10px; margin-bottom:3px; } .kv b { font-size:13px; }
+    .notes { margin-top:10px; color:var(--muted); font-size:12px; line-height:1.45; } .empty { padding:20px; text-align:center; color:var(--muted); } .hide { display:none; }
     @media (min-width:700px) { .grid { grid-template-columns:repeat(4,1fr); } }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="topbar">
-      <h1>FTA Mobile Log Viewer</h1>
-      <div class="sub">Trang đọc Forward Test Log riêng cho điện thoại. Chỉ xem dữ liệu, không scan, không sửa/xóa log.</div>
-      <div id="status" class="status">Sẵn sàng.</div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <button id="settingsToggle" class="secondary">Cài đặt</button>
-        <button id="refreshBtn">Tải log</button>
-      </div>
-      <div id="settingsBox" class="hide">
-        <label>Supabase Project URL</label>
-        <input id="supaUrl" placeholder="https://xxxx.supabase.co" />
-        <label>Supabase anon key</label>
-        <input id="supaKey" placeholder="anon public key" />
-        <div class="row">
-          <div>
-            <label>Email</label>
-            <input id="email" placeholder="email" />
-          </div>
-          <div>
-            <label>Password</label>
-            <input id="password" type="password" placeholder="password" />
-          </div>
-        </div>
-        <div class="row" style="margin-top:8px;">
-          <button id="saveBtn" class="secondary">Lưu config</button>
-          <button id="loginBtn">Login</button>
-        </div>
-        <label>Hoặc import file JSON</label>
-        <input id="jsonFile" type="file" accept="application/json,.json" />
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="mini"><span>Total</span><b id="mTotal">0</b></div>
-      <div class="mini"><span>Active</span><b id="mActive">0</b></div>
-      <div class="mini"><span>TP2 / TP1</span><b id="mWin">0 / 0</b></div>
-      <div class="mini"><span>Loss / Weak</span><b id="mLoss">0 / 0</b></div>
-    </div>
-
-    <div class="card">
-      <div class="tabs">
-        <button data-tab="active" class="active">Active</button>
-        <button data-tab="closed">Closed</button>
-        <button data-tab="tp2">TP2</button>
-        <button data-tab="loss">Loss</button>
-        <button data-tab="all">All</button>
-      </div>
-      <div class="row" style="margin-top:10px;">
-        <select id="sideFilter">
-          <option value="ALL">Tất cả side</option>
-          <option value="LONG">LONG</option>
-          <option value="SHORT">SHORT</option>
-        </select>
-        <input id="searchBox" placeholder="Tìm symbol..." />
-      </div>
-    </div>
-
-    <div id="list"></div>
-  </div>
-
-  <script>
-    const $ = id => document.getElementById(id);
-    const CFG = 'fta_mobile_viewer_cfg_v1';
-    let client = null;
-    let session = null;
-    let signals = [];
-    let currentTab = 'active';
-
-    function setStatus(msg) { $('status').textContent = msg; }
-    function fmt(n, d=4) { return Number.isFinite(+n) ? (+n).toLocaleString('en-US', { maximumFractionDigits:d }) : '-'; }
-    function binanceUrl(symbol) { return `https://www.binance.com/en/futures/${symbol}`; }
-    function isActive(s) { return ['NEW','OPEN','TP1_HIT'].includes(s.status); }
-    function isTp2(s) { return ['TP2_WIN','WIN'].includes(s.status); }
-    function isTp1(s) { return s.status === 'TP1_ONLY'; }
-    function isLoss(s) { return s.status === 'LOSS'; }
-    function isWeak(s) { return s.status === 'WEAK_AFTER_ENTRY'; }
-    function statusClass(s) {
-      if (isTp2(s)) return 'win';
-      if (isLoss(s)) return 'loss';
-      if (isWeak(s) || s.status === 'EXPIRED' || s.status === 'TP1_ONLY') return 'warn';
-      return '';
-    }
-    function saveCfg() {
-      const cfg = { supaUrl:$('supaUrl').value.trim(), supaKey:$('supaKey').value.trim(), email:$('email').value.trim() };
-      localStorage.setItem(CFG, JSON.stringify(cfg));
-      setStatus('Đã lưu config viewer.');
-    }
-    function loadCfg() {
-      try {
-        const cfg = JSON.parse(localStorage.getItem(CFG) || '{}');
-        $('supaUrl').value = cfg.supaUrl || '';
-        $('supaKey').value = cfg.supaKey || '';
-        $('email').value = cfg.email || '';
-      } catch {}
-    }
-    function initClient() {
-      const url = $('supaUrl').value.trim();
-      const key = $('supaKey').value.trim();
-      if (!url || !key) throw new Error('Thiếu Supabase URL hoặc anon key.');
-      client = supabase.createClient(url, key);
-      return client;
-    }
-    async function login() {
-      saveCfg();
-      initClient();
-      const { data, error } = await client.auth.signInWithPassword({ email:$('email').value.trim(), password:$('password').value });
-      if (error) throw error;
-      session = data.session;
-      setStatus('Login thành công. Bấm Tải log để đọc dữ liệu.');
-    }
-    async function loadFromCloud() {
-      if (!client) initClient();
-      const { data: sessionData } = await client.auth.getSession();
-      session = sessionData.session;
-      if (!session) throw new Error('Chưa login Supabase.');
-      const { data, error } = await client
-        .from('signals')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('signal_time', { ascending:false })
-        .limit(1000);
-      if (error) throw error;
-      signals = (data || []).map(r => r.payload || r.data || r.signal || r).filter(Boolean);
-      setStatus(`Đã tải ${signals.length} signals từ cloud.`);
-      render();
-    }
-    function loadFromJsonFile(file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const parsed = JSON.parse(reader.result);
-          signals = Array.isArray(parsed) ? parsed : Array.isArray(parsed.signals) ? parsed.signals : [];
-          setStatus(`Đã import ${signals.length} signals từ JSON.`);
-          render();
-        } catch (e) { setStatus('Import JSON lỗi: ' + e.message); }
-      };
-      reader.readAsText(file);
-    }
-    function filteredSignals() {
-      const side = $('sideFilter').value;
-      const q = $('searchBox').value.trim().toUpperCase();
-      return signals.filter(s => {
-        if (side !== 'ALL' && s.side !== side) return false;
-        if (q && !String(s.symbol || '').includes(q)) return false;
-        if (currentTab === 'active') return isActive(s);
-        if (currentTab === 'closed') return !isActive(s);
-        if (currentTab === 'tp2') return isTp2(s) || isTp1(s);
-        if (currentTab === 'loss') return isLoss(s) || isWeak(s) || s.status === 'EXPIRED';
-        return true;
-      }).sort((a,b)=>(b.signalTime || Date.parse(b.createdAt||0) || 0)-(a.signalTime || Date.parse(a.createdAt||0) || 0));
-    }
-    function renderMetrics() {
-      $('mTotal').textContent = signals.length;
-      $('mActive').textContent = signals.filter(isActive).length;
-      $('mWin').textContent = `${signals.filter(isTp2).length} / ${signals.filter(isTp1).length}`;
-      $('mLoss').textContent = `${signals.filter(isLoss).length} / ${signals.filter(isWeak).length}`;
-    }
-    function render() {
-      renderMetrics();
-      const rows = filteredSignals();
-      $('list').innerHTML = rows.map(s => {
-        const level = s.signalLevel || 'LEGACY';
-        const plan = s.planQuality?.grade || '-';
-        const entryHit = s.entryHitTime ? new Date(s.entryHitTime).toLocaleString('vi-VN') : '-';
-        return `<div class="signal">
-          <div class="sig-head">
-            <div>
-              <a class="symbol" href="${binanceUrl(s.symbol)}" target="_blank" rel="noopener noreferrer">${s.symbol || '-'}</a>
-              <span class="id">${s.id || '-'}</span>
-            </div>
-            <div style="text-align:right;">
-              <span class="tag ${s.side === 'LONG' ? 'long' : s.side === 'SHORT' ? 'short' : 'statusTag'}">${s.side || '-'}</span><br>
-              <span class="tag statusTag ${statusClass(s)}" style="margin-top:6px;">${s.status || '-'}</span>
-            </div>
-          </div>
-          <div class="kv">
-            <div><span>Entry</span><b>${fmt(s.entry,6)}</b></div>
-            <div><span>SL</span><b>${fmt(s.sl,6)}</b></div>
-            <div><span>TP1</span><b>${fmt(s.tp1,6)}</b></div>
-            <div><span>TP2</span><b>${fmt(s.tp2,6)}</b></div>
-            <div><span>Score / Stable</span><b>${fmt(s.score,0)} / ${fmt(s.stability,0)}</b></div>
-            <div><span>Level / Plan</span><b>${level} / ${plan}</b></div>
-            <div><span>MFE / MAE</span><b>${fmt(s.mfe,2)}% / ${fmt(s.mae,2)}%</b></div>
-            <div><span>Entry hit</span><b>${entryHit}</b></div>
-          </div>
-          <div class="notes">
-            <b>Result:</b> ${s.result || '-'}<br>
-            <b>Batch:</b> ${s.batchId || '-'}<br>
-            <b>Learning:</b> ${s.learningDecision || '-'} ${s.learningDecisionReason ? '· ' + s.learningDecisionReason : ''}<br>
-            <b>Reasons:</b> ${(s.reasons || []).slice(-4).join(' · ') || '-'}
-          </div>
-        </div>`;
-      }).join('') || '<div class="empty">Không có signal phù hợp bộ lọc.</div>';
-    }
-
-    $('settingsToggle').onclick = () => $('settingsBox').classList.toggle('hide');
-    $('saveBtn').onclick = saveCfg;
-    $('loginBtn').onclick = () => login().catch(e => setStatus('Login lỗi: ' + e.message));
-    $('refreshBtn').onclick = () => loadFromCloud().catch(e => setStatus('Tải log lỗi: ' + e.message));
-    $('jsonFile').onchange = e => e.target.files?.[0] && loadFromJsonFile(e.target.files[0]);
-    document.querySelectorAll('.tabs button').forEach(btn => btn.onclick = () => {
-      document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentTab = btn.dataset.tab;
-      render();
-    });
-    $('sideFilter').onchange = render;
-    $('searchBox').oninput = render;
-    loadCfg();
-  </script>
+<div class="wrap">
+  <div class="topbar"><h1>FTA Mobile Log Viewer v4.7</h1><div class="sub">Trang đọc Forward Test Log riêng cho điện thoại. Chỉ xem dữ liệu, không scan, không sửa/xóa log.</div><div id="status" class="status">Sẵn sàng.</div></div>
+  <div class="card"><div class="row"><button id="settingsToggle" class="secondary">Cài đặt</button><button id="refreshBtn">Tải log</button></div><div id="settingsBox" class="hide"><label>Supabase Project URL</label><input id="supaUrl" placeholder="https://xxxx.supabase.co" /><label>Supabase anon key</label><input id="supaKey" placeholder="anon public key" /><div class="row"><div><label>Email</label><input id="email" placeholder="email" /></div><div><label>Password</label><input id="password" type="password" placeholder="password" /></div></div><div class="row" style="margin-top:8px;"><button id="saveBtn" class="secondary">Lưu config</button><button id="loginBtn">Login</button></div><label>Hoặc import file JSON</label><input id="jsonFile" type="file" accept="application/json,.json" /></div></div>
+  <div class="grid"><div class="mini"><span>Total</span><b id="mTotal">0</b></div><div class="mini"><span>Active</span><b id="mActive">0</b></div><div class="mini"><span>TP2 / TP1</span><b id="mWin">0 / 0</b></div><div class="mini"><span>Loss / Weak</span><b id="mLoss">0 / 0</b></div></div>
+  <div class="card"><div class="tabs"><button data-tab="active" class="active">Active</button><button data-tab="closed">Closed</button><button data-tab="tp2">TP2/TP1</button><button data-tab="loss">Loss/Weak</button><button data-tab="noentry">No Entry</button><button data-tab="all">All</button></div><div class="row" style="margin-top:10px;"><select id="sideFilter"><option value="ALL">Tất cả side</option><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select><input id="searchBox" placeholder="Tìm symbol..." /></div></div>
+  <div id="list"></div>
+</div>
+<script>
+const $ = id => document.getElementById(id); const CFG = 'fta_mobile_viewer_cfg_v1'; let client = null, session = null, signals = [], currentTab = 'active';
+function setStatus(msg) { $('status').textContent = msg; }
+function fmt(n, d=4) { return Number.isFinite(+n) ? (+n).toLocaleString('en-US', { maximumFractionDigits:d }) : '-'; }
+function binanceUrl(symbol) { return `https://www.binance.com/en/futures/${symbol}`; }
+function resultKind(s) { if (['TP2_WIN','WIN'].includes(s.status)) return 'FULL_WIN'; if (s.status === 'LOSS') return 'LOSS'; if (s.status === 'WEAK_AFTER_ENTRY') return 'WEAK'; if (s.status === 'TP1_ONLY') return 'TP1_ONLY'; if (s.status === 'EXPIRED_NO_ENTRY' || s.result === 'EXPIRED_NO_ENTRY') return 'EXPIRED_NO_ENTRY'; if (s.status === 'EXPIRED_AFTER_ENTRY_NO_TP1' || s.result === 'EXPIRED_AFTER_ENTRY_NO_TP1') return 'WEAK'; if (s.status === 'EXPIRED_AFTER_TP1_NO_TP2' || s.result === 'EXPIRED_AFTER_TP1_NO_TP2') return 'TP1_ONLY'; if (s.status === 'EXPIRED') return 'EXPIRED_OTHER'; return s.status || 'UNKNOWN'; }
+function displayStatus(s) { const k = resultKind(s); if (k === 'EXPIRED_NO_ENTRY') return 'NO_ENTRY_EXPIRED'; if (k === 'WEAK') return s.status === 'WEAK_AFTER_ENTRY' ? 'WEAK_AFTER_ENTRY' : 'EXPIRED_AFTER_ENTRY'; if (k === 'TP1_ONLY') return s.status === 'TP1_ONLY' ? 'TP1_ONLY' : 'TP1_EXPIRED'; return s.status || '-'; }
+function isActive(s) { return ['NEW','OPEN','TP1_HIT'].includes(s.status); } function isTp2(s) { return resultKind(s) === 'FULL_WIN'; } function isTp1(s) { return resultKind(s) === 'TP1_ONLY'; } function isLoss(s) { return resultKind(s) === 'LOSS'; } function isWeak(s) { return resultKind(s) === 'WEAK'; } function isNoEntry(s) { return resultKind(s) === 'EXPIRED_NO_ENTRY'; }
+function statusClass(s) { if (isTp2(s)) return 'win'; if (isLoss(s)) return 'loss'; if (isWeak(s) || isTp1(s)) return 'warn'; return ''; }
+function saveCfg() { const cfg = { supaUrl:$('supaUrl').value.trim(), supaKey:$('supaKey').value.trim(), email:$('email').value.trim() }; localStorage.setItem(CFG, JSON.stringify(cfg)); setStatus('Đã lưu config viewer.'); }
+function loadCfg() { try { const cfg = JSON.parse(localStorage.getItem(CFG) || '{}'); $('supaUrl').value = cfg.supaUrl || ''; $('supaKey').value = cfg.supaKey || ''; $('email').value = cfg.email || ''; } catch {} }
+function initClient() { const url = $('supaUrl').value.trim(), key = $('supaKey').value.trim(); if (!url || !key) throw new Error('Thiếu Supabase URL hoặc anon key.'); client = supabase.createClient(url, key); return client; }
+async function login() { saveCfg(); initClient(); const { data, error } = await client.auth.signInWithPassword({ email:$('email').value.trim(), password:$('password').value }); if (error) throw error; session = data.session; setStatus('Login thành công. Bấm Tải log để đọc dữ liệu.'); }
+async function loadFromCloud() { if (!client) initClient(); const { data: sessionData } = await client.auth.getSession(); session = sessionData.session; if (!session) throw new Error('Chưa login Supabase.'); const { data, error } = await client.from('signals').select('*').eq('user_id', session.user.id).order('signal_time', { ascending:false }).limit(1000); if (error) throw error; signals = (data || []).map(r => r.payload || r.data || r.signal || r).filter(Boolean); setStatus(`Đã tải ${signals.length} signals từ cloud.`); render(); }
+function loadFromJsonFile(file) { const reader = new FileReader(); reader.onload = () => { try { const parsed = JSON.parse(reader.result); signals = Array.isArray(parsed) ? parsed : Array.isArray(parsed.signals) ? parsed.signals : []; setStatus(`Đã import ${signals.length} signals từ JSON.`); render(); } catch (e) { setStatus('Import JSON lỗi: ' + e.message); } }; reader.readAsText(file); }
+function filteredSignals() { const side = $('sideFilter').value, q = $('searchBox').value.trim().toUpperCase(); return signals.filter(s => { if (side !== 'ALL' && s.side !== side) return false; if (q && !String(s.symbol || '').includes(q)) return false; if (currentTab === 'active') return isActive(s); if (currentTab === 'closed') return !isActive(s); if (currentTab === 'tp2') return isTp2(s) || isTp1(s); if (currentTab === 'loss') return isLoss(s) || isWeak(s) || resultKind(s) === 'EXPIRED_OTHER'; if (currentTab === 'noentry') return isNoEntry(s); return true; }).sort((a,b)=>(b.signalTime || Date.parse(b.createdAt||0) || 0)-(a.signalTime || Date.parse(a.createdAt||0) || 0)); }
+function renderMetrics() { $('mTotal').textContent = signals.length; $('mActive').textContent = signals.filter(isActive).length; $('mWin').textContent = `${signals.filter(isTp2).length} / ${signals.filter(isTp1).length}`; $('mLoss').textContent = `${signals.filter(isLoss).length} / ${signals.filter(isWeak).length}`; }
+function render() { renderMetrics(); const rows = filteredSignals(); $('list').innerHTML = rows.map(s => { const level = s.signalLevel || 'LEGACY', plan = s.planQuality?.grade || '-', entryHit = s.entryHitTime ? new Date(s.entryHitTime).toLocaleString('vi-VN') : '-'; return `<div class="signal"><div class="sig-head"><div><a class="symbol" href="${binanceUrl(s.symbol)}" target="_blank" rel="noopener noreferrer">${s.symbol || '-'}</a><span class="id">${s.id || '-'}</span></div><div style="text-align:right;"><span class="tag ${s.side === 'LONG' ? 'long' : s.side === 'SHORT' ? 'short' : 'statusTag'}">${s.side || '-'}</span><br><span class="tag statusTag ${statusClass(s)}" style="margin-top:6px;">${displayStatus(s)}</span></div></div><div class="kv"><div><span>Entry</span><b>${fmt(s.entry,6)}</b></div><div><span>SL</span><b>${fmt(s.sl,6)}</b></div><div><span>TP1</span><b>${fmt(s.tp1,6)}</b></div><div><span>TP2</span><b>${fmt(s.tp2,6)}</b></div><div><span>Score / Stable</span><b>${fmt(s.score,0)} / ${fmt(s.stability,0)}</b></div><div><span>Level / Plan</span><b>${level} / ${plan}</b></div><div><span>MFE / MAE</span><b>${fmt(s.mfe,2)}% / ${fmt(s.mae,2)}%</b></div><div><span>Entry hit</span><b>${entryHit}</b></div></div><div class="notes"><b>Result:</b> ${s.result || displayStatus(s) || '-'}<br><b>Batch:</b> ${s.batchId || '-'}<br><b>Learning:</b> ${s.learningDecision || '-'} ${s.learningDecisionReason ? '· ' + s.learningDecisionReason : ''}<br><b>Reasons:</b> ${(s.reasons || []).slice(-4).join(' · ') || '-'}</div></div>`; }).join('') || '<div class="empty">Không có signal phù hợp bộ lọc.</div>'; }
+$('settingsToggle').onclick = () => $('settingsBox').classList.toggle('hide'); $('saveBtn').onclick = saveCfg; $('loginBtn').onclick = () => login().catch(e => setStatus('Login lỗi: ' + e.message)); $('refreshBtn').onclick = () => loadFromCloud().catch(e => setStatus('Tải log lỗi: ' + e.message)); $('jsonFile').onchange = e => e.target.files?.[0] && loadFromJsonFile(e.target.files[0]); document.querySelectorAll('.tabs button').forEach(btn => btn.onclick = () => { document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active')); btn.classList.add('active'); currentTab = btn.dataset.tab; render(); }); $('sideFilter').onchange = render; $('searchBox').oninput = render; loadCfg();
+</script>
 </body>
 </html>
