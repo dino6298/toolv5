@@ -342,6 +342,11 @@
           <button id="batchSummaryBtn" class="secondary">Tóm tắt batch</button>
         </div>
         <div class="row">
+          <button id="adaptiveAnalyzeBtn" class="secondary">Analyze Learning Setting</button>
+          <button id="adaptiveApplyBtn" class="secondary">Apply Suggested Setting</button>
+        </div>
+        <div id="adaptiveBox" class="status">Adaptive Settings: chưa phân tích. Bấm Analyze Learning Setting để đề xuất thông số mới từ Learning Stats.</div>
+        <div class="row">
           <button id="compactBtn" class="secondary">Compact learning</button>
           <button id="clearSummaryBtn" class="danger">Xóa learning summary</button>
         </div>
@@ -1802,6 +1807,135 @@ async function clearLearningSummary() {
   setStatus('Đã xóa Learning Summary local. Raw Forward Test Log không bị xóa.');
 }
 
+
+let lastAdaptiveSuggestion = null;
+function adaptiveClosedSignals() {
+  return loadSignals().filter(s => !['NEW','OPEN','TP1_HIT'].includes(s.status) && (s.status || s.result));
+}
+function adaptiveOutcome(s) {
+  const st = s.status || '';
+  const res = s.result || '';
+  if (['TP2_WIN','WIN'].includes(st) || res === 'TP2_HIT_FULL_WIN') return 'TP2';
+  if (st === 'LOSS' || res === 'SL_BEFORE_TP1') return 'LOSS';
+  if (st === 'WEAK_AFTER_ENTRY' || res.includes('WEAK_AFTER_ENTRY')) return 'WEAK_AFTER_ENTRY';
+  if (st === 'TP1_ONLY') return 'TP1_ONLY';
+  if (st === 'CANCELLED') return 'CANCELLED';
+  if (res === 'EXPIRED_NO_ENTRY' || st === 'EXPIRED_NO_ENTRY') return 'EXPIRED_NO_ENTRY';
+  if (res === 'EXPIRED_AFTER_ENTRY_NO_TP1' || st === 'EXPIRED_AFTER_ENTRY_NO_TP1') return 'EXPIRED_AFTER_ENTRY_NO_TP1';
+  if (res === 'EXPIRED_AFTER_TP1_NO_TP2' || st === 'EXPIRED_AFTER_TP1_NO_TP2') return 'EXPIRED_AFTER_TP1_NO_TP2';
+  if (st === 'EXPIRED') return s.entryHitTime ? (s.tp1HitTime ? 'EXPIRED_AFTER_TP1_NO_TP2' : 'EXPIRED_AFTER_ENTRY_NO_TP1') : 'EXPIRED_NO_ENTRY';
+  return 'OTHER';
+}
+function adaptiveRate(n, d) { return d ? n / d * 100 : 0; }
+function numVal(id, fallback=0) { const el=$(id); const n=Number(el?.value); return Number.isFinite(n) ? n : fallback; }
+function clampByTf(id, value, tf) {
+  const ranges = {
+    '5m': { minScore:[76,84], qMinStable:[66,78], qMinAdx:[23,34], qMinRr:[1.00,1.25], qMaxEmaDist:[0.35,0.85], qMaxVwapDist:[0.55,1.25], cooldownMin:[45,180], expireHours:[1,3], weakMin:[30,75], dupMin:[60,150] },
+    '15m': { minScore:[70,82], qMinStable:[62,74], qMinAdx:[20,30], qMinRr:[1.10,1.45], qMaxEmaDist:[0.60,1.20], qMaxVwapDist:[0.80,1.60], cooldownMin:[60,180], expireHours:[3,6], weakMin:[60,120], dupMin:[120,300] },
+    '1h': { minScore:[68,80], qMinStable:[56,72], qMinAdx:[18,28], qMinRr:[1.15,1.60], qMaxEmaDist:[1.00,2.30], qMaxVwapDist:[1.40,3.00], cooldownMin:[120,360], expireHours:[6,12], weakMin:[120,240], dupMin:[300,720] }
+  };
+  const r = (ranges[tf] || ranges['15m'])[id];
+  if (!r) return value;
+  return clamp(value, r[0], r[1]);
+}
+function roundById(id, value) {
+  if (['qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread'].includes(id)) return Math.round(value * 100) / 100;
+  return Math.round(value);
+}
+function buildAdaptiveSuggestion() {
+  const closed = adaptiveClosedSignals();
+  const tf = $('interval')?.value || '15m';
+  const cur = collectConfig();
+  const sug = { ...cur };
+  const notes = [];
+  const counts = { total:closed.length, tp2:0, loss:0, noEntry:0, weakAfterEntry:0, tp1NoTp2:0, tp1Only:0, activated:0, reaction:0 };
+  const side = { LONG:{total:0, activated:0, weak:0, reaction:0, loss:0, tp2:0}, SHORT:{total:0, activated:0, weak:0, reaction:0, loss:0, tp2:0} };
+  for (const s of closed) {
+    const o = adaptiveOutcome(s);
+    const sd = side[s.side] || null;
+    if (sd) sd.total++;
+    if (o !== 'EXPIRED_NO_ENTRY' && o !== 'CANCELLED' && o !== 'OTHER') { counts.activated++; if (sd) sd.activated++; }
+    if (o === 'TP2') { counts.tp2++; counts.reaction++; if (sd) { sd.tp2++; sd.reaction++; } }
+    else if (o === 'TP1_ONLY' || o === 'EXPIRED_AFTER_TP1_NO_TP2') { counts.tp1Only++; counts.reaction++; counts.tp1NoTp2++; if (sd) sd.reaction++; }
+    else if (o === 'LOSS') { counts.loss++; if (sd) sd.loss++; }
+    else if (o === 'WEAK_AFTER_ENTRY' || o === 'EXPIRED_AFTER_ENTRY_NO_TP1') { counts.weakAfterEntry++; if (sd) sd.weak++; }
+    else if (o === 'EXPIRED_NO_ENTRY') counts.noEntry++;
+  }
+  const closedN = counts.total;
+  const activatedN = counts.activated;
+  const weakAct = adaptiveRate(counts.weakAfterEntry, activatedN);
+  const lossAct = adaptiveRate(counts.loss, activatedN);
+  const noEntryRate = adaptiveRate(counts.noEntry, closedN);
+  const reactionRate = adaptiveRate(counts.reaction, closedN);
+  const tp2Rate = adaptiveRate(counts.tp2, closedN);
+  const tp1NoTp2Rate = adaptiveRate(counts.tp1NoTp2, closedN);
+
+  const bump = (id, delta) => { sug[id] = String(roundById(id, clampByTf(id, numVal(id) + delta, tf))); };
+  const set = (id, val) => { sug[id] = String(roundById(id, clampByTf(id, val, tf))); };
+
+  if (closedN < 20) notes.push('Dữ liệu < 20 closed signals: chỉ nên tham khảo, chưa nên Apply mạnh.');
+  if (closedN >= 20 && closedN < 50) notes.push('Dữ liệu 20–50 closed signals: chỉ cập nhật nhẹ từng bước.');
+
+  if (weakAct > 40) {
+    bump('qMinStable', 2);
+    bump('qMinAdx', 1);
+    bump('minScore', 1);
+    bump('weakMin', -15);
+    notes.push(`Weak sau entry cao ${fmt(weakAct,1)}% → siết momentum: tăng Stability/ADX/Score, giảm thời gian Weak.`);
+  }
+  if (lossAct > 35) {
+    bump('qMinStable', 3);
+    bump('qMinAdx', 2);
+    bump('qMaxEmaDist', -0.10);
+    bump('qMaxVwapDist', -0.15);
+    bump('cooldownMin', 30);
+    sug.qBtcFilter = 'STRICT';
+    notes.push(`Loss sau entry cao ${fmt(lossAct,1)}% → siết entry/market filter và tăng cooldown.`);
+  }
+  if (noEntryRate > 25) {
+    bump('expireHours', 1);
+    bump('dupMin', 30);
+    bump('qMaxEmaDist', 0.10);
+    bump('qMaxVwapDist', 0.10);
+    notes.push(`No-entry expire cao ${fmt(noEntryRate,1)}% → entry hơi khó khớp: nới nhẹ EMA/VWAP distance, tăng expire/duplicate.`);
+  }
+  if (reactionRate >= 35 && (tp2Rate < 15 || tp1NoTp2Rate > 18)) {
+    bump('qMinRr', -0.05);
+    notes.push(`Có phản ứng nhưng TP2 thấp/TP1 hụt TP2 ${fmt(tp1NoTp2Rate,1)}% → giảm nhẹ RR tối thiểu, không block hướng tín hiệu.`);
+  }
+  const longWeak = adaptiveRate(side.LONG.weak, side.LONG.activated);
+  const shortWeak = adaptiveRate(side.SHORT.weak, side.SHORT.activated);
+  if (side.LONG.activated >= 10 && longWeak > 50) notes.push(`LONG đang yếu: ${fmt(longWeak,1)}% weak sau entry. Khi BTC_NEUTRAL nên ưu tiên SELECTIVE/không trade LONG thường.`);
+  if (side.SHORT.activated >= 5 && shortWeak < 25) notes.push(`SHORT đang khỏe hơn trong batch: weak ${fmt(shortWeak,1)}%. Có thể ưu tiên SHORT khi BTC_BEAR.`);
+  if (!notes.length) notes.push('Learning Stats chưa phát hiện lỗi lớn. Giữ setting hiện tại hoặc chỉ chỉnh rất nhẹ.');
+
+  return { current:cur, suggested:sug, counts, side, rates:{ weakAct, lossAct, noEntryRate, reactionRate, tp2Rate, tp1NoTp2Rate }, notes, tf, createdAt:new Date().toISOString() };
+}
+function renderAdaptiveSuggestion(pack) {
+  const changed = Object.keys(pack.suggested).filter(k => String(pack.suggested[k]) !== String(pack.current[k]) && $(k));
+  const rows = changed.map(k => `<tr><td>${k}</td><td>${pack.current[k] ?? '-'}</td><td><b>${pack.suggested[k]}</b></td></tr>`).join('') || '<tr><td colspan="3" class="muted">Không có thay đổi thông số chính.</td></tr>';
+  const c = pack.counts;
+  const r = pack.rates;
+  $('adaptiveBox').innerHTML = `
+    <b>Adaptive Settings Engine v1</b><br>
+    <span class="muted">TF ${pack.tf} · Closed ${c.total} · Activated ${c.activated} · TP2 ${fmt(r.tp2Rate,1)}% · Reaction ${fmt(r.reactionRate,1)}% · Weak-after-entry ${fmt(r.weakAct,1)}% · Loss-after-entry ${fmt(r.lossAct,1)}% · No-entry ${fmt(r.noEntryRate,1)}%</span>
+    <div class="tablebox" style="margin-top:8px;"><table><thead><tr><th>Setting</th><th>Current</th><th>Suggested</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="note">${pack.notes.map(x => '• ' + x).join('<br>')}</div>
+  `;
+}
+function analyzeAdaptiveSettings() {
+  lastAdaptiveSuggestion = buildAdaptiveSuggestion();
+  renderAdaptiveSuggestion(lastAdaptiveSuggestion);
+  setStatus('Đã phân tích Learning Stats và tạo đề xuất Adaptive Settings. Kiểm tra Before/After rồi bấm Apply nếu đồng ý.');
+}
+function applySuggestedAdaptiveSettings() {
+  if (!lastAdaptiveSuggestion) analyzeAdaptiveSettings();
+  if (!lastAdaptiveSuggestion) return;
+  applyConfig(lastAdaptiveSuggestion.suggested);
+  saveConfigLocal();
+  setStatus('Đã áp dụng Suggested Setting từ Learning Stats. Nên tạo batch mới để test hiệu quả setting này.');
+}
+
 function renderStats() {
   const coreRows = buildLearningCoreRows();
   const coreItems = Object.entries(coreRows).map(([k, r]) => {
@@ -2219,6 +2353,8 @@ $('compactBtn').onclick = () => compactLearning({ pushCloud:false });
 $('clearSummaryBtn').onclick = clearLearningSummary;
 $('summaryPushBtn').onclick = pushLearningSummaryToSupabase;
 $('summaryPullBtn').onclick = pullLearningSummaryFromSupabase;
+$('adaptiveAnalyzeBtn').onclick = analyzeAdaptiveSettings;
+$('adaptiveApplyBtn').onclick = applySuggestedAdaptiveSettings;
 
 const SCAN_TIMEFRAME_PRESETS = {
   '5m': { interval:'5m', trackInterval:'1m', topN:12, scanSec:300, forwardSec:60, minVol:100000000, minScore:80, dupMin:90, expireHours:2, weakMin:45, weakMfePct:55, maxActiveSymbol:1, cooldownMin:60, compactHours:24, maxClosedRaw:250 },
