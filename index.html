@@ -196,6 +196,18 @@
             <option value="TRADE_ASSIST">Trade Assist - lọc chặt để hỗ trợ quyết định</option>
           </select>
         </label>
+        <label>Preset dùng nhanh
+          <select id="readyPreset">
+            <option value="">-- Chọn preset --</option>
+            <option value="LEARN_15M_FAST" selected>Learning 15m - lấy dữ liệu nhanh</option>
+            <option value="LEARN_15M_WIDE">Learning 15m - rộng hơn nếu ít tín hiệu</option>
+            <option value="LEARN_5M_SCALP">Learning 5m - scalp data</option>
+            <option value="LEARN_1H_SWING">Learning 1h - swing data</option>
+            <option value="TRADE_15M_BALANCED">Trade Assist 15m - Balanced</option>
+            <option value="TRADE_15M_SAFE">Trade Assist 15m - Safe</option>
+          </select>
+        </label>
+        <button id="applyReadyPresetBtn" class="secondary">Áp preset dùng nhanh</button>
         <label>Preset Scan theo khung
           <select id="scanTfPreset">
             <option value="5m">5m Scalping - lọc rất chặt</option>
@@ -785,7 +797,7 @@ function setStatus(msg) {
 }
 
 function getConfigFields() {
-  return ['appMode','scanTfPreset','interval','trackInterval','topN','scanSec','forwardSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','cooldownMin','fillMode','feePct','slippagePct','minNetRr','batchName','compactHours','maxClosedRaw','proxyUrl','supaUrl','supaKey','supaEmail'];
+  return ['readyPreset','appMode','scanTfPreset','interval','trackInterval','topN','scanSec','forwardSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','cooldownMin','fillMode','feePct','slippagePct','minNetRr','batchName','compactHours','maxClosedRaw','proxyUrl','supaUrl','supaKey','supaEmail'];
 }
 function collectConfig() {
   const cfg = {};
@@ -805,6 +817,78 @@ function applyConfig(cfg = {}) {
   if (cfg.supaKey) localStorage.setItem(SUPA_KEY_KEY, String(cfg.supaKey).trim());
   if (cfg.supaEmail) localStorage.setItem(SUPA_EMAIL_KEY, String(cfg.supaEmail).trim());
 }
+
+const READY_PRESETS = {
+  LEARN_15M_FAST: {
+    label: 'Learning 15m - lấy dữ liệu nhanh',
+    appMode:'RESEARCH', scanTfPreset:'15m', interval:'15m', trackInterval:'1m',
+    qualityPreset:'AGGRESSIVE', qLearningFilter:'OFF', qBtcFilter:'SOFT', qSignalMode:'TREND_AND_BREAKOUT',
+    topN:30, scanSec:300, forwardSec:120, minVol:30000000, minScore:65,
+    qMinStable:58, qMinAdx:18, qMinRr:1.05, qMaxEmaDist:1.30, qMaxVwapDist:1.80, qMinEmaSpread:0.05,
+    qLongRsi:'40-72', qShortRsi:'28-60',
+    dupMin:120, expireHours:4, weakMin:90, weakMfePct:40, maxActiveSymbol:1, cooldownMin:30,
+    fillMode:'CONSERVATIVE', feePct:0.08, slippagePct:0.04, minNetRr:1.00
+  },
+  LEARN_15M_WIDE: {
+    label: 'Learning 15m - rộng hơn nếu ít tín hiệu',
+    appMode:'RESEARCH', scanTfPreset:'15m', interval:'15m', trackInterval:'1m',
+    qualityPreset:'AGGRESSIVE', qLearningFilter:'OFF', qBtcFilter:'SOFT', qSignalMode:'ALL',
+    topN:35, scanSec:300, forwardSec:120, minVol:25000000, minScore:62,
+    qMinStable:55, qMinAdx:16, qMinRr:1.00, qMaxEmaDist:1.60, qMaxVwapDist:2.20, qMinEmaSpread:0.03,
+    qLongRsi:'38-74', qShortRsi:'26-62',
+    dupMin:90, expireHours:4, weakMin:90, weakMfePct:35, maxActiveSymbol:1, cooldownMin:30,
+    fillMode:'CONSERVATIVE', feePct:0.08, slippagePct:0.04, minNetRr:0.95
+  },
+  LEARN_5M_SCALP: {
+    label: 'Learning 5m - scalp data',
+    appMode:'RESEARCH', scanTfPreset:'5m', interval:'5m', trackInterval:'1m',
+    qualityPreset:'AGGRESSIVE', qLearningFilter:'OFF', qBtcFilter:'SOFT', qSignalMode:'TREND_AND_BREAKOUT',
+    topN:18, scanSec:300, forwardSec:60, minVol:80000000, minScore:68,
+    qMinStable:62, qMinAdx:20, qMinRr:1.00, qMaxEmaDist:0.95, qMaxVwapDist:1.35, qMinEmaSpread:0.05,
+    qLongRsi:'40-72', qShortRsi:'28-60',
+    dupMin:60, expireHours:2, weakMin:45, weakMfePct:40, maxActiveSymbol:1, cooldownMin:30,
+    fillMode:'CONSERVATIVE', feePct:0.08, slippagePct:0.05, minNetRr:0.95
+  },
+  LEARN_1H_SWING: {
+    label: 'Learning 1h - swing data',
+    appMode:'RESEARCH', scanTfPreset:'1h', interval:'1h', trackInterval:'5m',
+    qualityPreset:'AGGRESSIVE', qLearningFilter:'OFF', qBtcFilter:'MEDIUM', qSignalMode:'TREND_AND_BREAKOUT',
+    topN:25, scanSec:900, forwardSec:300, minVol:30000000, minScore:65,
+    qMinStable:55, qMinAdx:18, qMinRr:1.15, qMaxEmaDist:2.00, qMaxVwapDist:2.80, qMinEmaSpread:0.08,
+    qLongRsi:'40-72', qShortRsi:'28-60',
+    dupMin:360, expireHours:8, weakMin:180, weakMfePct:40, maxActiveSymbol:1, cooldownMin:120,
+    fillMode:'CONSERVATIVE', feePct:0.08, slippagePct:0.04, minNetRr:1.05
+  },
+  TRADE_15M_BALANCED: {
+    label: 'Trade Assist 15m - Balanced',
+    appMode:'TRADE_ASSIST', scanTfPreset:'15m', interval:'15m', trackInterval:'1m',
+    qualityPreset:'BALANCED', qLearningFilter:'ON', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK',
+    topN:20, scanSec:300, forwardSec:120, minVol:50000000, minScore:75,
+    qMinStable:66, qMinAdx:24, qMinRr:1.25, qMaxEmaDist:0.85, qMaxVwapDist:1.15, qMinEmaSpread:0.12,
+    qLongRsi:'46-66', qShortRsi:'34-52',
+    dupMin:180, expireHours:4, weakMin:90, weakMfePct:50, maxActiveSymbol:1, cooldownMin:90,
+    fillMode:'CONSERVATIVE', feePct:0.08, slippagePct:0.04, minNetRr:1.10
+  },
+  TRADE_15M_SAFE: {
+    label: 'Trade Assist 15m - Safe',
+    appMode:'TRADE_ASSIST', scanTfPreset:'15m', interval:'15m', trackInterval:'1m',
+    qualityPreset:'SAFE', qLearningFilter:'ON', qBtcFilter:'STRICT', qSignalMode:'TREND_PULLBACK',
+    topN:18, scanSec:420, forwardSec:120, minVol:60000000, minScore:78,
+    qMinStable:70, qMinAdx:26, qMinRr:1.30, qMaxEmaDist:0.70, qMaxVwapDist:1.00, qMinEmaSpread:0.15,
+    qLongRsi:'48-64', qShortRsi:'36-50',
+    dupMin:240, expireHours:4, weakMin:75, weakMfePct:55, maxActiveSymbol:1, cooldownMin:120,
+    fillMode:'CONSERVATIVE', feePct:0.08, slippagePct:0.04, minNetRr:1.15
+  }
+};
+function applyReadyPreset(name = $('readyPreset')?.value) {
+  const preset = READY_PRESETS[name];
+  if (!preset) return setStatus('Chưa chọn preset dùng nhanh.');
+  applyConfig(preset);
+  if ($('quickSignalMode') && $('qSignalMode')) $('quickSignalMode').value = $('qSignalMode').value;
+  saveConfigLocal();
+  setStatus(`Đã áp preset: ${preset.label}. ${preset.appMode === 'RESEARCH' ? 'Dùng để lấy dữ liệu Learning Stats, không dùng làm tín hiệu trade thật.' : 'Dùng để hỗ trợ quyết định thủ công.'}`);
+}
+
 function saveConfigLocal() {
   const cfg = collectConfig();
   localStorage.setItem(CONFIG_STORE_KEY, JSON.stringify(cfg));
@@ -2364,6 +2448,7 @@ $('tabLog').onclick = () => showTab('log');
 $('tabStats').onclick = () => showTab('stats');
 ['sideFilter','sortBy'].forEach(id => $(id).addEventListener('change', () => renderScan(lastScanRows)));
 $('qualityPreset').addEventListener('change', () => applyQualityPreset($('qualityPreset').value));
+$('applyReadyPresetBtn').onclick = () => applyReadyPreset($('readyPreset').value);
 $('scanTfPreset').addEventListener('change', () => applyScanTimeframePreset($('scanTfPreset').value));
 $('interval').addEventListener('change', () => {
   if ($('scanTfPreset')) $('scanTfPreset').value = $('interval').value;
@@ -2377,7 +2462,7 @@ $('quickSignalMode').addEventListener('change', () => {
 $('qSignalMode').addEventListener('change', () => {
   $('quickSignalMode').value = $('qSignalMode').value;
 });
-['appMode','interval','trackInterval','topN','scanSec','forwardSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','cooldownMin','fillMode','feePct','slippagePct','minNetRr','batchName'].forEach(id => {
+['readyPreset','appMode','interval','trackInterval','topN','scanSec','forwardSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','cooldownMin','fillMode','feePct','slippagePct','minNetRr','batchName'].forEach(id => {
   const el = $(id);
   if (el) el.addEventListener('change', () => saveConfigLocal());
 });
@@ -2450,7 +2535,9 @@ function applyScanTimeframePreset(tf) {
   saveConfigLocal();
   setStatus(`Đã áp preset Scan ${p.interval}: top ${p.topN}, auto ${p.scanSec}s, volume ${fmt(p.minVol/1e6,0)}M, expire ${p.expireHours}h.`);
 }
-applyConfig(loadConfigLocal());
+const localCfg = loadConfigLocal();
+if (Object.keys(localCfg || {}).length) applyConfig(localCfg);
+else applyReadyPreset('LEARN_15M_FAST');
 if ($('batchName')) $('batchName').value = getCurrentBatch();
 if ($('scanTfPreset') && $('interval')) $('scanTfPreset').value = $('interval').value || '15m';
 if ($('quickSignalMode') && $('qSignalMode')) $('quickSignalMode').value = $('qSignalMode').value;
