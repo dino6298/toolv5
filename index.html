@@ -289,6 +289,12 @@
               <option value="OFF">Tắt</option>
             </select>
           </label>
+          <label>Regime-aware Learning
+            <select id="qRegimeLearning">
+              <option value="ON" selected>Bật - học theo BTC_BULL/BEAR/NEUTRAL</option>
+              <option value="OFF">Tắt - dùng thống kê chung</option>
+            </select>
+          </label>
         </div>
         <div class="row">
           <label>LONG RSI range
@@ -342,11 +348,6 @@
           <button id="batchSummaryBtn" class="secondary">Tóm tắt batch</button>
         </div>
         <div class="row">
-          <button id="adaptiveAnalyzeBtn" class="secondary">Analyze Learning Setting</button>
-          <button id="adaptiveApplyBtn" class="secondary">Apply Suggested Setting</button>
-        </div>
-        <div id="adaptiveBox" class="status">Adaptive Settings: chưa phân tích. Bấm Analyze Learning Setting để đề xuất thông số mới từ Learning Stats.</div>
-        <div class="row">
           <button id="compactBtn" class="secondary">Compact learning</button>
           <button id="clearSummaryBtn" class="danger">Xóa learning summary</button>
         </div>
@@ -364,6 +365,14 @@
           </label>
           <label>Cooldown Loss/Weak, phút
             <input id="cooldownMin" type="number" min="0" max="720" value="90" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Learning block TTL, giờ
+            <input id="learningBlockTtlHours" type="number" min="1" max="72" value="8" />
+          </label>
+          <label>Probe mỗi nhóm, giờ
+            <input id="learningProbeHours" type="number" min="1" max="24" value="4" />
           </label>
         </div>
         <div class="hint">Auto Scan chỉ tìm signal mới. Auto Forward-test cập nhật log rồi Compact/Push cloud. Push local luôn là bước cuối cùng.</div>
@@ -549,6 +558,7 @@ let lastBtcTrend = { mode: 'UNKNOWN', longOk: true, shortOk: true, note: 'BTC fi
 let apiHealth = { status: 'UNKNOWN', lastOk: null, lastError: '', requestCount: 0 };
 const BATCH_KEY = 'fta_current_batch_v4_5';
 const LEARNING_SUMMARY_KEY = 'fta_learning_summary_v4_5';
+const LEARNING_PROBE_KEY = 'fta_learning_probe_v1';
 const CONFIG_STORE_KEY = 'fta_indicator_scanner_v4_2_config';
 function loadLearningSummary() {
   try { return JSON.parse(localStorage.getItem(LEARNING_SUMMARY_KEY) || '{}'); } catch { return {}; }
@@ -660,8 +670,13 @@ function learningBucketForSignal(s) {
     `TF ${s.interval}`
   ];
 }
-function learningCoreBucketsForSignal(s) {
-  // Core buckets: chỉ các nhóm thật sự được dùng để filter signal mới.
+function getSignalRegime(s={}) {
+  if (s.btcRegime) return s.btcRegime;
+  const joined = Array.isArray(s.reasons) ? s.reasons.join(' ') : String(s.reasons || '');
+  const m = joined.match(/BTC_(BULL|BEAR|NEUTRAL)/);
+  return m ? `BTC_${m[1]}` : (lastBtcTrend?.mode || 'UNKNOWN');
+}
+function baseLearningCoreBucketsForSignal(s) {
   const rsDir = (s.side === 'LONG')
     ? ((Number(s.rs1h || 0) >= 0 || Number(s.rs4h || 0) >= 0) ? 'LONG_RS_SUPPORT' : 'LONG_RS_AGAINST')
     : ((Number(s.rs1h || 0) <= 0 || Number(s.rs4h || 0) <= 0) ? 'SHORT_RS_SUPPORT' : 'SHORT_RS_AGAINST');
@@ -671,6 +686,20 @@ function learningCoreBucketsForSignal(s) {
     { type:'LEVEL', key:`LEVEL ${s.signalLevel || 'LEGACY'}`, minN:20 },
     { type:'PLAN', key:`PLAN ${(s.planQuality && s.planQuality.grade) || 'UNKNOWN'}`, minN:20 },
     { type:'RS_SIDE', key:`RS_SIDE ${rsDir}`, minN:20 }
+  ];
+}
+function learningCoreBucketsForSignal(s, opts={}) {
+  const regimeAware = opts.regimeAware ?? ($('qRegimeLearning')?.value !== 'OFF');
+  const base = baseLearningCoreBucketsForSignal(s);
+  if (!regimeAware) return base;
+  const regime = getSignalRegime(s);
+  return base.map(b => ({ ...b, key:`REGIME ${regime} | ${b.key}` }));
+}
+function learningCoreBucketsForSummary(s) {
+  // Lưu cả bucket chung và bucket theo regime. Khi thị trường đảo chiều, filter sẽ ưu tiên bucket regime hiện tại.
+  return [
+    ...baseLearningCoreBucketsForSignal(s),
+    ...learningCoreBucketsForSignal(s, { regimeAware:true })
   ];
 }
 function learningDecisionFromRates(row, minN) {
@@ -686,21 +715,51 @@ function learningDecisionFromRates(row, minN) {
   if (tp2Rate >= 25 && reactionRate >= 55 && lossRate <= 40) return { decision:'PREFER', cls:'good', reason:`TP2 ${fmt(tp2Rate,1)}%, Reaction ${fmt(reactionRate,1)}%` };
   return { decision:'ALLOW', cls:'good', reason:`Reaction ${fmt(reactionRate,1)}%` };
 }
+function loadLearningProbeMap() {
+  try { return JSON.parse(localStorage.getItem(LEARNING_PROBE_KEY) || '{}'); } catch { return {}; }
+}
+function saveLearningProbeMap(map) {
+  localStorage.setItem(LEARNING_PROBE_KEY, JSON.stringify(map || {}));
+}
+function canUseLearningProbe(key) {
+  const h = +($('learningProbeHours')?.value || 4);
+  const waitMs = h * 60 * 60 * 1000;
+  const map = loadLearningProbeMap();
+  return !map[key] || Date.now() - map[key] >= waitMs;
+}
+function markLearningProbe(key) {
+  const map = loadLearningProbeMap();
+  map[key] = Date.now();
+  saveLearningProbeMap(map);
+}
+function applyLearningTtlAndProbe(decision, bucketKey) {
+  if (!['BLOCK','DOWNGRADE'].includes(decision.decision)) return decision;
+  const ttlMs = (+($('learningBlockTtlHours')?.value || 8)) * 60 * 60 * 1000;
+  const updated = Date.parse(decision.updatedAt || decision.lastClosedAt || 0);
+  if (updated && Date.now() - updated > ttlMs) {
+    return { ...decision, decision:'PROBATION', cls:'warn', reason:`Hết TTL block ${Math.round(ttlMs/3600000)}h · ${decision.reason}` };
+  }
+  if (decision.decision === 'BLOCK' && canUseLearningProbe(bucketKey)) {
+    markLearningProbe(bucketKey);
+    return { ...decision, decision:'PROBE', cls:'warn', reason:`Probe định kỳ nhóm bị block · ${decision.reason}` };
+  }
+  return decision;
+}
 function addSignalToLearningSummary(summary, s) {
   const addToRow = (key) => {
     if (!summary[key]) summary[key] = { total:0, tp2:0, tp1Only:0, loss:0, weak:0, expired:0, cancelled:0, updatedAt:null };
     const row = summary[key];
     row.total++;
     if (isFullWinStatus(s.status)) row.tp2++;
-    else if (isTp1OnlyStatus(s.status)) row.tp1Only++;
+    else if (isTp1OnlyStatus(s.status, s.result)) row.tp1Only++;
     else if (isLossStatus(s.status)) row.loss++;
-    else if (isWeakStatus(s.status)) row.weak++;
-    else if (s.status === 'EXPIRED') row.expired++;
+    else if (isWeakStatus(s.status, s.result)) row.weak++;
+    else if (isExpiredStatus(s.status, s.result)) row.expired++;
     else if (s.status === 'CANCELLED') row.cancelled++;
     row.updatedAt = new Date().toISOString();
   };
   learningBucketForSignal(s).forEach(addToRow);
-  learningCoreBucketsForSignal(s).forEach(b => addToRow(b.key));
+  learningCoreBucketsForSummary(s).forEach(b => addToRow(b.key));
   return summary;
 }
 
@@ -753,7 +812,7 @@ function setStatus(msg) {
 }
 
 function getConfigFields() {
-  return ['scanTfPreset','interval','trackInterval','topN','scanSec','forwardSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','cooldownMin','batchName','compactHours','maxClosedRaw','proxyUrl','supaUrl','supaKey','supaEmail'];
+  return ['scanTfPreset','interval','trackInterval','topN','scanSec','forwardSec','minVol','minScore','dupMin','expireHours','sideFilter','sortBy','qualityPreset','qMinStable','qMinAdx','qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread','qLearningFilter','qRegimeLearning','qLongRsi','qShortRsi','qBtcFilter','qSignalMode','weakMin','weakMfePct','maxActiveSymbol','cooldownMin','learningBlockTtlHours','learningProbeHours','batchName','compactHours','maxClosedRaw','proxyUrl','supaUrl','supaKey','supaEmail'];
 }
 function collectConfig() {
   const cfg = {};
@@ -1091,29 +1150,53 @@ function parseRange(text, fallbackMin, fallbackMax) {
   if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return [fallbackMin, fallbackMax];
   return [parts[0], parts[1]];
 }
+function resultOf(sOrStatus, result) {
+  return typeof sOrStatus === 'object' ? (sOrStatus.result || sOrStatus.status) : (result || sOrStatus);
+}
 function isFullWinStatus(status) { return ['TP2_WIN','WIN'].includes(status); }
-function isTp1OnlyStatus(status) { return ['TP1_ONLY'].includes(status); }
+function isTp1OnlyStatus(status, result) {
+  const r = resultOf(status, result);
+  return ['TP1_ONLY','EXPIRED_AFTER_TP1_NO_TP2'].includes(r);
+}
 function isLossStatus(status) { return status === 'LOSS'; }
-function isWeakStatus(status) { return status === 'WEAK_AFTER_ENTRY'; }
-function isClosedResultStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN','WEAK_AFTER_ENTRY','EXPIRED','CANCELLED'].includes(status); }
-function isCompactableStatus(status) { return ['TP2_WIN','TP1_ONLY','LOSS','WIN','WEAK_AFTER_ENTRY','EXPIRED','CANCELLED'].includes(status); }
+function isExpiredNoEntryStatus(status, result) {
+  return resultOf(status, result) === 'EXPIRED_NO_ENTRY';
+}
+function isWeakStatus(status, result) {
+  const r = resultOf(status, result);
+  return r === 'WEAK_AFTER_ENTRY' || r === 'EXPIRED_AFTER_ENTRY_NO_TP1';
+}
+function isExpiredStatus(status, result) {
+  const r = resultOf(status, result);
+  return ['EXPIRED','EXPIRED_NO_ENTRY','EXPIRED_AFTER_ENTRY_NO_TP1','EXPIRED_AFTER_TP1_NO_TP2'].includes(r);
+}
+function isClosedResultStatus(status, result) {
+  return ['TP2_WIN','TP1_ONLY','LOSS','WIN','WEAK_AFTER_ENTRY','EXPIRED','EXPIRED_NO_ENTRY','EXPIRED_AFTER_ENTRY_NO_TP1','EXPIRED_AFTER_TP1_NO_TP2','CANCELLED'].includes(resultOf(status, result));
+}
+function isCompactableStatus(status, result) {
+  return isClosedResultStatus(status, result);
+}
 function calcLearningRates(arr) {
   const total = arr.length;
   const tp2 = arr.filter(s => isFullWinStatus(s.status)).length;
-  const tp1Only = arr.filter(s => isTp1OnlyStatus(s.status)).length;
+  const tp1Only = arr.filter(s => isTp1OnlyStatus(s.status, s.result)).length;
   const loss = arr.filter(s => isLossStatus(s.status)).length;
-  const weak = arr.filter(s => isWeakStatus(s.status)).length;
+  const weak = arr.filter(s => isWeakStatus(s.status, s.result)).length;
+  const expiredNoEntry = arr.filter(s => isExpiredNoEntryStatus(s.status, s.result)).length;
+  const activated = arr.filter(s => !isExpiredNoEntryStatus(s.status, s.result)).length;
   const fullWinRate = total ? tp2 / total * 100 : 100;
   const reactionRate = total ? (tp2 + tp1Only) / total * 100 : 100;
+  const activatedReactionRate = activated ? (tp2 + tp1Only) / activated * 100 : 100;
   const lossRate = total ? loss / total * 100 : 0;
   const weakRate = total ? weak / total * 100 : 0;
-  return { total, tp2, tp1Only, loss, weak, fullWinRate, reactionRate, lossRate, weakRate };
+  const noEntryRate = total ? expiredNoEntry / total * 100 : 0;
+  return { total, activated, tp2, tp1Only, loss, weak, expiredNoEntry, fullWinRate, reactionRate, activatedReactionRate, lossRate, weakRate, noEntryRate };
 }
 function buildLearningCoreRows() {
   const summary = loadLearningSummary();
   const rows = {};
   const addRow = (key, value) => {
-    if (!rows[key]) rows[key] = { total:0, tp2:0, tp1Only:0, loss:0, weak:0, expired:0, cancelled:0 };
+    if (!rows[key]) rows[key] = { total:0, tp2:0, tp1Only:0, loss:0, weak:0, expired:0, cancelled:0, updatedAt:null, lastClosedAt:null };
     rows[key].total += value.total || 0;
     rows[key].tp2 += value.tp2 || 0;
     rows[key].tp1Only += value.tp1Only || value.tp1_only || 0;
@@ -1121,21 +1204,29 @@ function buildLearningCoreRows() {
     rows[key].weak += value.weak || 0;
     rows[key].expired += value.expired || 0;
     rows[key].cancelled += value.cancelled || 0;
+    const u = Date.parse(value.updatedAt || value.updated_at || value.lastClosedAt || 0);
+    const cur = Date.parse(rows[key].updatedAt || rows[key].lastClosedAt || 0);
+    if (u && u > cur) {
+      rows[key].updatedAt = value.updatedAt || value.updated_at || value.lastClosedAt;
+      rows[key].lastClosedAt = value.lastClosedAt || value.updatedAt || value.updated_at;
+    }
   };
   Object.entries(summary).forEach(([k, v]) => {
-    if (k.startsWith('SYMBOL_SIDE ') || k.startsWith('SETUP_SIDE ') || k.startsWith('LEVEL ') || k.startsWith('PLAN ') || k.startsWith('RS_SIDE ')) addRow(k, v);
+    if (k.startsWith('SYMBOL_SIDE ') || k.startsWith('SETUP_SIDE ') || k.startsWith('LEVEL ') || k.startsWith('PLAN ') || k.startsWith('RS_SIDE ') || k.startsWith('REGIME ')) addRow(k, v);
   });
-  for (const s of loadSignals().filter(s => isClosedResultStatus(s.status) && !s.compactedAt)) {
+  for (const s of loadSignals().filter(s => isClosedResultStatus(s.status, s.result) && !s.compactedAt)) {
     const value = {
       total:1,
       tp2:isFullWinStatus(s.status) ? 1 : 0,
-      tp1Only:isTp1OnlyStatus(s.status) ? 1 : 0,
+      tp1Only:isTp1OnlyStatus(s.status, s.result) ? 1 : 0,
       loss:isLossStatus(s.status) ? 1 : 0,
-      weak:isWeakStatus(s.status) ? 1 : 0,
-      expired:s.status === 'EXPIRED' ? 1 : 0,
-      cancelled:s.status === 'CANCELLED' ? 1 : 0
+      weak:isWeakStatus(s.status, s.result) ? 1 : 0,
+      expired:isExpiredStatus(s.status, s.result) ? 1 : 0,
+      cancelled:s.status === 'CANCELLED' ? 1 : 0,
+      updatedAt: new Date(s.closeTime || s.signalTime || Date.now()).toISOString(),
+      lastClosedAt: new Date(s.closeTime || s.signalTime || Date.now()).toISOString()
     };
-    learningCoreBucketsForSignal(s).forEach(b => addRow(b.key, value));
+    learningCoreBucketsForSummary(s).forEach(b => addRow(b.key, value));
   }
   return rows;
 }
@@ -1143,24 +1234,26 @@ function evaluateLearningForSignal(r) {
   const pseudo = {
     ...r,
     status: 'NEW',
+    btcRegime: r.btcRegime || lastBtcTrend.mode,
     signalLevel: r.signalLevel || 'VALID',
     planQuality: r.planQuality || tradePlanQuality(r)
   };
   const coreRows = buildLearningCoreRows();
   const checks = learningCoreBucketsForSignal(pseudo).map(b => {
-    const row = coreRows[b.key] || { total:0, tp2:0, tp1Only:0, loss:0, weak:0 };
-    const decision = learningDecisionFromRates(row, b.minN);
+    const row = coreRows[b.key] || { total:0, tp2:0, tp1Only:0, loss:0, weak:0, updatedAt:null, lastClosedAt:null };
+    const baseDecision = learningDecisionFromRates(row, b.minN);
+    const decision = applyLearningTtlAndProbe({ ...baseDecision, updatedAt: row.updatedAt, lastClosedAt: row.lastClosedAt }, b.key);
     return { ...b, ...row, ...decision };
   });
-  const rank = { BLOCK:5, DOWNGRADE:4, WARN_TP2:3, ALLOW:2, PREFER:1, NOT_ENOUGH_DATA:0 };
+  const rank = { BLOCK:6, PROBE:5, PROBATION:4, DOWNGRADE:3, WARN_TP2:2, ALLOW:1, PREFER:1, NOT_ENOUGH_DATA:0 };
   const decisive = checks
     .filter(x => x.decision !== 'NOT_ENOUGH_DATA')
     .sort((a,b)=>(rank[b.decision]||0)-(rank[a.decision]||0))[0];
-  if (!decisive) return { decision:'NOT_ENOUGH_DATA', cls:'muted', reason:'Chưa đủ dữ liệu học', checks };
+  if (!decisive) return { decision:'NOT_ENOUGH_DATA', cls:'muted', reason:'Chưa đủ dữ liệu học theo regime hiện tại', checks };
   return { decision: decisive.decision, cls: decisive.cls, reason: `${decisive.key}: ${decisive.reason}`, checks };
 }
 function recentStatsForGate(r) {
-  const closed = loadSignals().filter(s => isClosedResultStatus(s.status));
+  const closed = loadSignals().filter(s => isClosedResultStatus(s.status, s.result));
   const sameSymbol = closed.filter(s => s.symbol === r.symbol).slice(0, 10);
   const sameSide = closed.filter(s => s.side === r.side).slice(0, 25);
   const sameSetup = closed.filter(s => s.side === r.side && s.setupType === r.setupType).slice(0, 25);
@@ -1227,6 +1320,13 @@ function qualityGate(r) {
     r.learningDecisionReason = ld.reason;
     if (ld.decision === 'BLOCK') {
       blocks.push(`Learning BLOCK: ${ld.reason}`);
+    } else if (ld.decision === 'PROBE') {
+      r.learningWarning = `Learning PROBE: ${ld.reason}`;
+      r.signalLevel = 'WATCHLIST';
+      r.isProbe = true;
+    } else if (ld.decision === 'PROBATION') {
+      r.learningWarning = `Learning PROBATION: ${ld.reason}`;
+      r.signalLevel = 'WATCHLIST';
     } else if (ld.decision === 'DOWNGRADE') {
       r.learningWarning = `Learning DOWNGRADE: ${ld.reason}`;
       r.signalLevel = r.signalLevel === 'PREMIUM' ? 'VALID' : 'WATCHLIST';
@@ -1426,6 +1526,8 @@ function createSignalsFromScan(rows) {
       signalLevel: levelInfo.level,
       learningDecision: r.learningDecision || 'NOT_ENOUGH_DATA',
       learningDecisionReason: r.learningDecisionReason || '',
+      btcRegime: lastBtcTrend.mode || 'UNKNOWN',
+      isProbe: Boolean(r.isProbe),
       batchId: getCurrentBatch(),
       planQuality: r.planQuality || tradePlanQuality(r),
       rs1h: r.rs1h,
@@ -1527,13 +1629,19 @@ async function forwardTestOne(s) {
 
   for (const k of kl) {
     if (k.time < s.signalTime) continue;
-    if (k.time > expireAt && !['TP2_WIN','TP1_ONLY','LOSS','WIN','EXPIRED','CANCELLED'].includes(s.status)) {
+    if (k.time > expireAt && !['TP2_WIN','TP1_ONLY','LOSS','WIN','EXPIRED_NO_ENTRY','EXPIRED_AFTER_ENTRY_NO_TP1','EXPIRED_AFTER_TP1_NO_TP2','EXPIRED','CANCELLED'].includes(s.status)) {
       expiredByTime = true;
-      s.status = 'EXPIRED';
       s.closeTime = k.time;
-      if (!entered) s.result = 'EXPIRED_NO_ENTRY';
-      else if (s.tp1HitTime) s.result = 'EXPIRED_AFTER_TP1_NO_TP2';
-      else s.result = 'EXPIRED_AFTER_ENTRY_NO_TP1';
+      if (!entered) {
+        s.status = 'EXPIRED_NO_ENTRY';
+        s.result = 'EXPIRED_NO_ENTRY';
+      } else if (s.tp1HitTime) {
+        s.status = 'EXPIRED_AFTER_TP1_NO_TP2';
+        s.result = 'EXPIRED_AFTER_TP1_NO_TP2';
+      } else {
+        s.status = 'EXPIRED_AFTER_ENTRY_NO_TP1';
+        s.result = 'EXPIRED_AFTER_ENTRY_NO_TP1';
+      }
       break;
     }
 
@@ -1589,7 +1697,7 @@ async function forwardTestOne(s) {
   }
   s.mfe = maxFav;
   s.mae = maxAdv;
-  const closedStatuses = ['TP2_WIN','TP1_ONLY','LOSS','WIN','EXPIRED','CANCELLED','WEAK_AFTER_ENTRY'];
+  const closedStatuses = ['TP2_WIN','TP1_ONLY','LOSS','WIN','EXPIRED_NO_ENTRY','EXPIRED_AFTER_ENTRY_NO_TP1','EXPIRED_AFTER_TP1_NO_TP2','EXPIRED','CANCELLED','WEAK_AFTER_ENTRY'];
   if (s.entryHitTime && !closedStatuses.includes(s.status)) {
     const weakAt = s.entryHitTime + ((+$('weakMin').value || 90) * 60 * 1000);
     const tp1Dist = Math.abs(s.tp1 - s.entry);
@@ -1603,11 +1711,17 @@ async function forwardTestOne(s) {
     }
   }
   if (!expiredByTime && !closedStatuses.includes(s.status) && Date.now() > expireAt) {
-    s.status = 'EXPIRED';
     s.closeTime = Date.now();
-    if (!s.entryHitTime) s.result = 'EXPIRED_NO_ENTRY';
-    else if (s.tp1HitTime) s.result = 'EXPIRED_AFTER_TP1_NO_TP2';
-    else s.result = 'EXPIRED_AFTER_ENTRY_NO_TP1';
+    if (!s.entryHitTime) {
+      s.status = 'EXPIRED_NO_ENTRY';
+      s.result = 'EXPIRED_NO_ENTRY';
+    } else if (s.tp1HitTime) {
+      s.status = 'EXPIRED_AFTER_TP1_NO_TP2';
+      s.result = 'EXPIRED_AFTER_TP1_NO_TP2';
+    } else {
+      s.status = 'EXPIRED_AFTER_ENTRY_NO_TP1';
+      s.result = 'EXPIRED_AFTER_ENTRY_NO_TP1';
+    }
   }
   s.lastCheckedAt = new Date().toISOString();
   return s;
@@ -1750,7 +1864,7 @@ function createNewBatch() {
 function summarizeCurrentBatch() {
   const batch = getCurrentBatch();
   const arr = loadSignals().filter(s => (s.batchId || 'NO_BATCH') === batch);
-  const closed = arr.filter(s => isClosedResultStatus(s.status));
+  const closed = arr.filter(s => isClosedResultStatus(s.status, s.result));
   const rates = calcLearningRates(closed);
   const open = arr.filter(s => ['NEW','OPEN','TP1_HIT'].includes(s.status)).length;
   const msg = `Batch ${batch}: tổng ${arr.length}, active ${open}, closed ${closed.length}, TP2 ${rates.tp2}, TP1 only ${rates.tp1Only}, Loss ${rates.loss}, Weak ${rates.weak || 0}, TP2 rate ${fmt(rates.fullWinRate,1)}%, Reaction ${fmt(rates.reactionRate,1)}%, Loss ${fmt(rates.lossRate,1)}%, Weak ${fmt(rates.weakRate || 0,1)}%.`;
@@ -1764,7 +1878,7 @@ function compactLearning({ pushCloud=false } = {}) {
   const maxClosedRaw = +$('maxClosedRaw').value || 300;
   let signals = loadSignals();
   let summary = loadLearningSummary();
-  const closed = signals.filter(s => isCompactableStatus(s.status));
+  const closed = signals.filter(s => isCompactableStatus(s.status, s.result));
   const oldClosedIds = new Set(closed
     .filter(s => !s.compactedAt && (now - (s.closeTime || s.signalTime || 0)) >= compactMs)
     .map(s => s.id));
@@ -1786,7 +1900,7 @@ function compactLearning({ pushCloud=false } = {}) {
   const keepClosedRaw = new Set(sortedClosedRaw.slice(0, maxClosedRaw).map(s => s.id));
   const before = signals.length;
   signals = signals.filter(s => {
-    if (!isCompactableStatus(s.status)) return true;
+    if (!isCompactableStatus(s.status, s.result)) return true;
     if (!s.compactedAt) return keepClosedRaw.has(s.id);
     return false;
   });
@@ -1805,135 +1919,6 @@ async function clearLearningSummary() {
   saveLearningSummary({});
   renderStats();
   setStatus('Đã xóa Learning Summary local. Raw Forward Test Log không bị xóa.');
-}
-
-
-let lastAdaptiveSuggestion = null;
-function adaptiveClosedSignals() {
-  return loadSignals().filter(s => !['NEW','OPEN','TP1_HIT'].includes(s.status) && (s.status || s.result));
-}
-function adaptiveOutcome(s) {
-  const st = s.status || '';
-  const res = s.result || '';
-  if (['TP2_WIN','WIN'].includes(st) || res === 'TP2_HIT_FULL_WIN') return 'TP2';
-  if (st === 'LOSS' || res === 'SL_BEFORE_TP1') return 'LOSS';
-  if (st === 'WEAK_AFTER_ENTRY' || res.includes('WEAK_AFTER_ENTRY')) return 'WEAK_AFTER_ENTRY';
-  if (st === 'TP1_ONLY') return 'TP1_ONLY';
-  if (st === 'CANCELLED') return 'CANCELLED';
-  if (res === 'EXPIRED_NO_ENTRY' || st === 'EXPIRED_NO_ENTRY') return 'EXPIRED_NO_ENTRY';
-  if (res === 'EXPIRED_AFTER_ENTRY_NO_TP1' || st === 'EXPIRED_AFTER_ENTRY_NO_TP1') return 'EXPIRED_AFTER_ENTRY_NO_TP1';
-  if (res === 'EXPIRED_AFTER_TP1_NO_TP2' || st === 'EXPIRED_AFTER_TP1_NO_TP2') return 'EXPIRED_AFTER_TP1_NO_TP2';
-  if (st === 'EXPIRED') return s.entryHitTime ? (s.tp1HitTime ? 'EXPIRED_AFTER_TP1_NO_TP2' : 'EXPIRED_AFTER_ENTRY_NO_TP1') : 'EXPIRED_NO_ENTRY';
-  return 'OTHER';
-}
-function adaptiveRate(n, d) { return d ? n / d * 100 : 0; }
-function numVal(id, fallback=0) { const el=$(id); const n=Number(el?.value); return Number.isFinite(n) ? n : fallback; }
-function clampByTf(id, value, tf) {
-  const ranges = {
-    '5m': { minScore:[76,84], qMinStable:[66,78], qMinAdx:[23,34], qMinRr:[1.00,1.25], qMaxEmaDist:[0.35,0.85], qMaxVwapDist:[0.55,1.25], cooldownMin:[45,180], expireHours:[1,3], weakMin:[30,75], dupMin:[60,150] },
-    '15m': { minScore:[70,82], qMinStable:[62,74], qMinAdx:[20,30], qMinRr:[1.10,1.45], qMaxEmaDist:[0.60,1.20], qMaxVwapDist:[0.80,1.60], cooldownMin:[60,180], expireHours:[3,6], weakMin:[60,120], dupMin:[120,300] },
-    '1h': { minScore:[68,80], qMinStable:[56,72], qMinAdx:[18,28], qMinRr:[1.15,1.60], qMaxEmaDist:[1.00,2.30], qMaxVwapDist:[1.40,3.00], cooldownMin:[120,360], expireHours:[6,12], weakMin:[120,240], dupMin:[300,720] }
-  };
-  const r = (ranges[tf] || ranges['15m'])[id];
-  if (!r) return value;
-  return clamp(value, r[0], r[1]);
-}
-function roundById(id, value) {
-  if (['qMinRr','qMaxEmaDist','qMaxVwapDist','qMinEmaSpread'].includes(id)) return Math.round(value * 100) / 100;
-  return Math.round(value);
-}
-function buildAdaptiveSuggestion() {
-  const closed = adaptiveClosedSignals();
-  const tf = $('interval')?.value || '15m';
-  const cur = collectConfig();
-  const sug = { ...cur };
-  const notes = [];
-  const counts = { total:closed.length, tp2:0, loss:0, noEntry:0, weakAfterEntry:0, tp1NoTp2:0, tp1Only:0, activated:0, reaction:0 };
-  const side = { LONG:{total:0, activated:0, weak:0, reaction:0, loss:0, tp2:0}, SHORT:{total:0, activated:0, weak:0, reaction:0, loss:0, tp2:0} };
-  for (const s of closed) {
-    const o = adaptiveOutcome(s);
-    const sd = side[s.side] || null;
-    if (sd) sd.total++;
-    if (o !== 'EXPIRED_NO_ENTRY' && o !== 'CANCELLED' && o !== 'OTHER') { counts.activated++; if (sd) sd.activated++; }
-    if (o === 'TP2') { counts.tp2++; counts.reaction++; if (sd) { sd.tp2++; sd.reaction++; } }
-    else if (o === 'TP1_ONLY' || o === 'EXPIRED_AFTER_TP1_NO_TP2') { counts.tp1Only++; counts.reaction++; counts.tp1NoTp2++; if (sd) sd.reaction++; }
-    else if (o === 'LOSS') { counts.loss++; if (sd) sd.loss++; }
-    else if (o === 'WEAK_AFTER_ENTRY' || o === 'EXPIRED_AFTER_ENTRY_NO_TP1') { counts.weakAfterEntry++; if (sd) sd.weak++; }
-    else if (o === 'EXPIRED_NO_ENTRY') counts.noEntry++;
-  }
-  const closedN = counts.total;
-  const activatedN = counts.activated;
-  const weakAct = adaptiveRate(counts.weakAfterEntry, activatedN);
-  const lossAct = adaptiveRate(counts.loss, activatedN);
-  const noEntryRate = adaptiveRate(counts.noEntry, closedN);
-  const reactionRate = adaptiveRate(counts.reaction, closedN);
-  const tp2Rate = adaptiveRate(counts.tp2, closedN);
-  const tp1NoTp2Rate = adaptiveRate(counts.tp1NoTp2, closedN);
-
-  const bump = (id, delta) => { sug[id] = String(roundById(id, clampByTf(id, numVal(id) + delta, tf))); };
-  const set = (id, val) => { sug[id] = String(roundById(id, clampByTf(id, val, tf))); };
-
-  if (closedN < 20) notes.push('Dữ liệu < 20 closed signals: chỉ nên tham khảo, chưa nên Apply mạnh.');
-  if (closedN >= 20 && closedN < 50) notes.push('Dữ liệu 20–50 closed signals: chỉ cập nhật nhẹ từng bước.');
-
-  if (weakAct > 40) {
-    bump('qMinStable', 2);
-    bump('qMinAdx', 1);
-    bump('minScore', 1);
-    bump('weakMin', -15);
-    notes.push(`Weak sau entry cao ${fmt(weakAct,1)}% → siết momentum: tăng Stability/ADX/Score, giảm thời gian Weak.`);
-  }
-  if (lossAct > 35) {
-    bump('qMinStable', 3);
-    bump('qMinAdx', 2);
-    bump('qMaxEmaDist', -0.10);
-    bump('qMaxVwapDist', -0.15);
-    bump('cooldownMin', 30);
-    sug.qBtcFilter = 'STRICT';
-    notes.push(`Loss sau entry cao ${fmt(lossAct,1)}% → siết entry/market filter và tăng cooldown.`);
-  }
-  if (noEntryRate > 25) {
-    bump('expireHours', 1);
-    bump('dupMin', 30);
-    bump('qMaxEmaDist', 0.10);
-    bump('qMaxVwapDist', 0.10);
-    notes.push(`No-entry expire cao ${fmt(noEntryRate,1)}% → entry hơi khó khớp: nới nhẹ EMA/VWAP distance, tăng expire/duplicate.`);
-  }
-  if (reactionRate >= 35 && (tp2Rate < 15 || tp1NoTp2Rate > 18)) {
-    bump('qMinRr', -0.05);
-    notes.push(`Có phản ứng nhưng TP2 thấp/TP1 hụt TP2 ${fmt(tp1NoTp2Rate,1)}% → giảm nhẹ RR tối thiểu, không block hướng tín hiệu.`);
-  }
-  const longWeak = adaptiveRate(side.LONG.weak, side.LONG.activated);
-  const shortWeak = adaptiveRate(side.SHORT.weak, side.SHORT.activated);
-  if (side.LONG.activated >= 10 && longWeak > 50) notes.push(`LONG đang yếu: ${fmt(longWeak,1)}% weak sau entry. Khi BTC_NEUTRAL nên ưu tiên SELECTIVE/không trade LONG thường.`);
-  if (side.SHORT.activated >= 5 && shortWeak < 25) notes.push(`SHORT đang khỏe hơn trong batch: weak ${fmt(shortWeak,1)}%. Có thể ưu tiên SHORT khi BTC_BEAR.`);
-  if (!notes.length) notes.push('Learning Stats chưa phát hiện lỗi lớn. Giữ setting hiện tại hoặc chỉ chỉnh rất nhẹ.');
-
-  return { current:cur, suggested:sug, counts, side, rates:{ weakAct, lossAct, noEntryRate, reactionRate, tp2Rate, tp1NoTp2Rate }, notes, tf, createdAt:new Date().toISOString() };
-}
-function renderAdaptiveSuggestion(pack) {
-  const changed = Object.keys(pack.suggested).filter(k => String(pack.suggested[k]) !== String(pack.current[k]) && $(k));
-  const rows = changed.map(k => `<tr><td>${k}</td><td>${pack.current[k] ?? '-'}</td><td><b>${pack.suggested[k]}</b></td></tr>`).join('') || '<tr><td colspan="3" class="muted">Không có thay đổi thông số chính.</td></tr>';
-  const c = pack.counts;
-  const r = pack.rates;
-  $('adaptiveBox').innerHTML = `
-    <b>Adaptive Settings Engine v1</b><br>
-    <span class="muted">TF ${pack.tf} · Closed ${c.total} · Activated ${c.activated} · TP2 ${fmt(r.tp2Rate,1)}% · Reaction ${fmt(r.reactionRate,1)}% · Weak-after-entry ${fmt(r.weakAct,1)}% · Loss-after-entry ${fmt(r.lossAct,1)}% · No-entry ${fmt(r.noEntryRate,1)}%</span>
-    <div class="tablebox" style="margin-top:8px;"><table><thead><tr><th>Setting</th><th>Current</th><th>Suggested</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="note">${pack.notes.map(x => '• ' + x).join('<br>')}</div>
-  `;
-}
-function analyzeAdaptiveSettings() {
-  lastAdaptiveSuggestion = buildAdaptiveSuggestion();
-  renderAdaptiveSuggestion(lastAdaptiveSuggestion);
-  setStatus('Đã phân tích Learning Stats và tạo đề xuất Adaptive Settings. Kiểm tra Before/After rồi bấm Apply nếu đồng ý.');
-}
-function applySuggestedAdaptiveSettings() {
-  if (!lastAdaptiveSuggestion) analyzeAdaptiveSettings();
-  if (!lastAdaptiveSuggestion) return;
-  applyConfig(lastAdaptiveSuggestion.suggested);
-  saveConfigLocal();
-  setStatus('Đã áp dụng Suggested Setting từ Learning Stats. Nên tạo batch mới để test hiệu quả setting này.');
 }
 
 function renderStats() {
@@ -1963,7 +1948,7 @@ function renderStats() {
       <td><b class="${r.cls}">${r.decision}</b><br><span class="muted">${r.reason}</span></td>
     </tr>`).join('') || '<tr><td colspan="7" class="muted">Chưa có dữ liệu Learning Filter Core.</td></tr>';
 
-  const done = loadSignals().filter(s => isClosedResultStatus(s.status));
+  const done = loadSignals().filter(s => isClosedResultStatus(s.status, s.result));
   const summary = loadLearningSummary();
   const groups = new Map();
   const addGroup = (key, value) => {
@@ -2134,7 +2119,7 @@ function computeNoTradeMode(rows=lastScanRows) {
 function updateBatchPerformanceDashboard() {
   const batch = getCurrentBatch();
   const arr = loadSignals().filter(s => (s.batchId || 'NO_BATCH') === batch);
-  const closed = arr.filter(s => isClosedResultStatus(s.status));
+  const closed = arr.filter(s => isClosedResultStatus(s.status, s.result));
   const rates = calcLearningRates(closed);
   const active = arr.filter(s => ['NEW','OPEN','TP1_HIT'].includes(s.status)).length;
   if ($('bTotal')) $('bTotal').textContent = arr.length;
@@ -2150,9 +2135,9 @@ function updateMetrics(rows=[]) {
   const newSig = signals.filter(s=>s.status==='NEW').length;
   const open = signals.filter(s=>['NEW','OPEN','TP1_HIT'].includes(s.status)).length;
   const tp2 = signals.filter(s=>isFullWinStatus(s.status)).length;
-  const tp1Only = signals.filter(s=>isTp1OnlyStatus(s.status)).length;
+  const tp1Only = signals.filter(s=>isTp1OnlyStatus(s.status, s.result)).length;
   const loss = signals.filter(s=>isLossStatus(s.status)).length;
-  const weak = signals.filter(s=>isWeakStatus(s.status)).length;
+  const weak = signals.filter(s=>isWeakStatus(s.status, s.result)).length;
   $('mScanned').textContent = rows.length || lastScanRows.length || 0;
   $('mNew').textContent = newSig;
   $('mOpen').textContent = open;
@@ -2353,8 +2338,6 @@ $('compactBtn').onclick = () => compactLearning({ pushCloud:false });
 $('clearSummaryBtn').onclick = clearLearningSummary;
 $('summaryPushBtn').onclick = pushLearningSummaryToSupabase;
 $('summaryPullBtn').onclick = pullLearningSummaryFromSupabase;
-$('adaptiveAnalyzeBtn').onclick = analyzeAdaptiveSettings;
-$('adaptiveApplyBtn').onclick = applySuggestedAdaptiveSettings;
 
 const SCAN_TIMEFRAME_PRESETS = {
   '5m': { interval:'5m', trackInterval:'1m', topN:12, scanSec:300, forwardSec:60, minVol:100000000, minScore:80, dupMin:90, expireHours:2, weakMin:45, weakMfePct:55, maxActiveSymbol:1, cooldownMin:60, compactHours:24, maxClosedRaw:250 },
